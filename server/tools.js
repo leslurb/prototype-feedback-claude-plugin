@@ -17,6 +17,7 @@ export const TOOLS = [
       proposal: { type: 'object', properties: { approach: { type: 'string' }, effort: { type: 'string', enum: ['S', 'M', 'L'] }, risk: { type: 'string' } } } } } },
 ];
 
+const PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const ID_RE = /^[A-Za-z0-9][\w.-]*$/;
 function checkId(id) { if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`invalid batch id ${id}`); }
 
@@ -33,8 +34,11 @@ export function callTool(L, name, args = {}) {
     const dir = path.join(L.batches, args.batch_id);
     const fj = path.join(dir, 'feedback.json');
     if (!fs.existsSync(fj)) throw new Error(`batch ${args.batch_id} is not open; call batch_open first`);
-    const version = Number(/v(\d+)$/.exec(JSON.parse(fs.readFileSync(fj, 'utf8')).schema)?.[1] || 6);
+    const feedback = JSON.parse(fs.readFileSync(fj, 'utf8'));
+    const version = Number(/v(\d+)$/.exec(feedback.schema)?.[1] || 6);
     const { batch_id, comment_id, status, ...rest } = args;
+    const known = !PROTO_KEYS.has(comment_id) && Array.isArray(feedback.comments) && feedback.comments.some((c) => c.id === comment_id);
+    if (!known) throw new Error(`unknown comment ${comment_id} in batch ${batch_id}`);
     const entry = setStatus(L.statusFile, { batchId: batch_id, version, commentId: comment_id, status, ...rest });
     fs.writeFileSync(path.join(dir, 'responses.json'), JSON.stringify(responsesDoc(readStatus(L.statusFile), batch_id), null, 2));
     return { ok: true, entry };
