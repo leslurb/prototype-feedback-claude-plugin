@@ -20,23 +20,29 @@ If `inbox_list`, `batch_open` or `status_set` returns an error, show the error t
 2. For a batch in state `error`, show its error text and tell the user the file could not be read. Do not pick it for work.
 3. Put batches whose `repoUrls` match this repo's git remote (compare host + owner/repo, ignore `.git` and protocol) first. Mark them "this repo". If the remote is missing, mark none.
 4. If there are no waiting or in-progress batches, say so, and say where exports are read from (`<Downloads>/prototype-feedback/inbox/` and `prototype-feedback_*.zip` in Downloads). Stop.
-5. Ask the user which batch to work on. Default to the newest matching one.
+5. Ask the user which batch to work on. Default to the newest matching one. If no batch matches this repo, do not pick a default: ask.
+6. If the chosen batch has `repoUrls` and none matches this repo's remote, say so and ask the user to confirm before planning.
 
 ## 2. Open it
 1. Call `batch_open` with the id. It unpacks the batch to `<dir>` and archives the ZIP.
-2. Skip comments that already have a final status in the returned `status` map (fixed, answered, proposed, needs_input, skipped).
-3. If `version_hints` pins a commit and it is in this repo's history, run `git rev-list --count <commit>..HEAD` and say how many commits the code moved since the reviewed version. Flag comments whose page maps to files changed since then (`git diff --name-only <commit>..HEAD`).
+2. Skip comments that already have a final status in the returned `status` map (fixed, answered, proposed, needs_input, skipped). The map also covers comments handled in earlier exports of the same session (entries have `from_batch`). Skip those the same way, and say in the plan how many were already done.
+3. `version_hints` is keyed by page host: `{ "<host>": { commit?, branch?, source } }`. Use the entry for the comment's host.
+   - If it has a `commit` in this repo's history, run `git rev-list --count <commit>..HEAD` and say how many commits the code moved since the reviewed version. Flag comments whose page maps to files changed since then (`git diff --name-only <commit>..HEAD`).
+   - If it has only a `branch` that exists locally, compare with `git rev-list --count <branch>..HEAD`.
+   - Otherwise skip the comparison and say so.
 
 ## 3. Plan, then wait
-1. Group comments by page, urgent first. For each, one line: verb, the reviewer's text (or "(no text — infer from screenshot)"), and what you intend to do.
-2. Read each comment's `screenshot_path` and `viewport_screenshot_path` (relative to `<dir>`) with the Read tool before planning it. Use `selector` and `element_snapshot` to find the element in the code.
+1. Group comments by page, urgent first. For each, one line: verb, the reviewer's text (or "(no text — infer from screenshot)"), and what you intend to do. For a comment addressed to a human (see step 5), the plan line says "needs_input: addressed to a person".
+2. Read each comment's `screenshot_path` and `viewport_screenshot_path` (relative to `<dir>`) with the Read tool when present (they can be null) before planning it. Use `selector` and `element_snapshot` to find the element in the code. Also use `attachments[].path` (files inside `<dir>`) and the top-level `console_log` / `network_log` of the batch's feedback.json as extra evidence.
 3. Show the plan and wait for the user's OK. Do not edit anything before that.
 
 ## 4. Branch
-1. If the opened batch already has `fixed` statuses, look for an existing branch that holds those commits: run `git branch --list "feedback/*"`, then `git log --oneline -1 <branch>` for each candidate. Ask the user whether to continue on that branch. Do not start a fresh branch from HEAD without asking.
+1. If the opened batch's `status` map has `commit_sha` values, run `git branch --contains <sha>` for them to find the branch that holds those commits. Ask the user whether to continue on that branch. If the user declines, ask for a branch name or stop. Do not guess, and do not start a fresh branch from HEAD without asking.
 2. Otherwise, create and check out a branch `feedback/<site>-<YYYY-MM-DD>` from HEAD (`<site>` = the first comment's page host without `www.`, dots → dashes; date in ET). If it exists, add `-2`, `-3`, …
 
 ## 5. Work each comment
+First rule: if the comment's `recipient_resolved` (or `recipient`) is `human`, do not change code or answer it yourself. `status_set` with `status: "needs_input"` and a `question_back` saying it is addressed to a person (name the reviewer if present).
+
 Per verb:
 - **fix** — something is wrong; decide how to make it right. A thin or empty comment is fine: infer from the screenshot, DOM snapshot and console log. Make the change, then make **one commit per comment** (message: `feedback: <short summary>`). Run `git rev-parse HEAD` right after the commit to get `commit_sha`. Then `status_set` with `status: "fixed"`, `commit_sha`, `summary` (≤120 chars), `files_changed`.
 - If a fix produces no diff, do not make an empty commit. `status_set` with `status: "skipped"` and the reason in `summary`.
