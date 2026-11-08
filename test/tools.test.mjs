@@ -102,3 +102,30 @@ test('a re-sent comment without newer status or history keeps the old entry', ()
   assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1.status, 'fixed');
   assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'done');
 });
+
+function resent(L, later, patch) {
+  const j = v6('B', ['k1'], later);
+  Object.assign(j.comments[0], patch);
+  fs.writeFileSync(path.join(L.inbox, 'b.zip'), makeZip({ 'feedback.json': JSON.stringify(j) }));
+}
+function fixedFixture() {
+  const L = fixture({ a: v6('A', ['k1']) });
+  callTool(L, 'batch_open', { id: 'A' });
+  callTool(L, 'status_set', { batch_id: 'A', comment_id: 'k1', status: 'fixed' });
+  const later = new Date(Date.parse(readStatus(L.statusFile).batches.A.comments.k1.acted_at) + 60000).toISOString();
+  return { L, later };
+}
+
+test('a reviewer Confirm after Claude fixed keeps the fixed entry and the batch can be done', () => {
+  const { L, later } = fixedFixture();
+  resent(L, later, { status: { state: 'confirmed', at: later, source: 'reviewer' }, history: [{ at: later, kind: 'confirm', note: 'ok' }] });
+  assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1.status, 'fixed');
+  assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'done');
+});
+
+test('an edit history entry newer than acted_at drops the entry', () => {
+  const { L, later } = fixedFixture();
+  resent(L, later, { history: [{ at: later, kind: 'edit', note: 'Comment edited' }] });
+  assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1, undefined);
+  assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'in_progress');
+});
