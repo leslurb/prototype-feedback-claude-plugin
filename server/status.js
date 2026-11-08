@@ -12,12 +12,24 @@ export function readStatus(file) {
   catch (e) { if (e.code === 'ENOENT') return { version: 1, batches: {} }; throw e; }
 }
 
-function writeAtomic(file, obj) {
+const RENAME_RETRY = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+function renameRetry(tmp, file) {
+  for (let n = 1; ; n += 1) {
+    try { return fs.renameSync(tmp, file); }
+    catch (e) {
+      if (!RENAME_RETRY.has(e.code) || n >= 10) throw e;
+      sleepMs(10 + Math.floor(Math.random() * 40)); // a reader holds the target open on Windows
+    }
+  }
+}
+
+export function writeAtomic(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
-    fs.renameSync(tmp, file);
+    renameRetry(tmp, file);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* tmp may not exist */ }
     throw e;
@@ -49,22 +61,34 @@ function acquireLock(file, waitMs) {
 
 /** Record one comment's status. version = the batch's export schema major (5 or 6).
  *  The whole read-modify-write runs under `${file}.lock` so concurrent sessions cannot drop each other's entries. */
-export function setStatus(file, { batchId, version, commentId, status, ...rest }, now = () => new Date().toISOString(), { waitMs = 2000 } = {}) {
+export function setStatus(file, { batchId, version, exportId = null, commentId, status, ...rest }, now = () => new Date().toISOString(), { waitMs = 2000, onWrite } = {}) {
   if (!ALLOWED.includes(status)) throw new Error(`status must be one of ${ALLOWED.join(', ')}`);
   if (!batchId || !commentId) throw new Error('batchId and commentId are required');
   const fd = acquireLock(file, waitMs);
   try {
     const s = readStatus(file);
-    const b = (s.batches[batchId] ||= { version, comments: {} });
+    const b = (s.batches[batchId] ||= { version, export_id: exportId, comments: {} });
     const entry = { status, acted_at: now() };
     for (const k of FIELDS) if (rest[k] !== undefined && rest[k] !== null) entry[k] = rest[k];
     b.comments[commentId] = entry;
     writeAtomic(file, s);
+    if (onWrite) onWrite(s); // still under the lock
     return entry;
   } finally {
     fs.closeSync(fd);
-    fs.unlinkSync(`${file}.lock`);
+    try { fs.unlinkSync(`${file}.lock`); } catch (e) { if (e.code !== 'ENOENT') throw e; } // taken over as stale
   }
+}
+
+/** Per comment id, the entry with the latest acted_at across ALL batches (a re-export reuses comment ids), tagged with from_batch. */
+export function latestByComment(state) {
+  const out = Object.create(null);
+  for (const [bid, b] of Object.entries(state.batches)) {
+    for (const [cid, e] of Object.entries(b.comments)) {
+      if (!out[cid] || String(e.acted_at) >= String(out[cid].acted_at)) out[cid] = { ...e, from_batch: bid };
+    }
+  }
+  return out;
 }
 
 function toResponse(commentId, e, v1) {
@@ -83,14 +107,14 @@ export function responsesDoc(state, batchId, now = () => new Date().toISOString(
   if (batchId) {
     const b = state.batches[batchId] || { version: 6, comments: {} };
     const v1 = b.version < 6;
-    return { schema: `prototype-feedback-response/${v1 ? 'v1' : 'v2'}`, batch_id: batchId, responded_at: now(),
+    return { schema: `prototype-feedback-response/${v1 ? 'v1' : 'v2'}`, batch_id: batchId, export_id: b.export_id ?? null, responded_at: now(),
              responses: Object.entries(b.comments).map(([cid, e]) => toResponse(cid, e, v1)) };
   }
   const responses = [];
   for (const [bid, b] of Object.entries(state.batches)) {
     for (const [cid, e] of Object.entries(b.comments)) {
       const r = toResponse(cid, e, false);
-      responses.push({ comment_id: r.comment_id, batch_id: bid, ...Object.fromEntries(Object.entries(r).filter(([k]) => k !== 'comment_id')) });
+      responses.push({ comment_id: r.comment_id, batch_id: bid, export_id: b.export_id ?? null, ...Object.fromEntries(Object.entries(r).filter(([k]) => k !== 'comment_id')) });
     }
   }
   return { schema: 'prototype-feedback-response/v2', responded_at: now(), responses };

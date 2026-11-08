@@ -20,3 +20,7 @@ test('mcp config starts the bundled server from the plugin root', () => {
   const c = j('.mcp.json');
   assert.deepEqual(c.mcpServers.pfb, { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server/mcp.js'] });
 });
+
+test('marketplace has a description', () => {
+  assert.equal(j('.claude-plugin/marketplace.json').description, 'Prototype Feedback tools for Claude Code');
+});

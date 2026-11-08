@@ -47,7 +47,7 @@ test('all-batches document (for the listener) is v2 with batch ids', () => {
   setStatus(f, { batchId: 'b1', version: 6, commentId: 'c1', status: 'answered', answer: 'yes' }, () => 't');
   const all = responsesDoc(readStatus(f), null, () => 'now');
   assert.equal(all.schema, 'prototype-feedback-response/v2');
-  assert.deepEqual(all.responses, [{ comment_id: 'c1', batch_id: 'b1', status: 'answered', answer: 'yes', acted_at: 't' }]);
+  assert.deepEqual(all.responses, [{ comment_id: 'c1', batch_id: 'b1', export_id: null, status: 'answered', answer: 'yes', acted_at: 't' }]);
 });
 
 test('setStatus throws when a fresh lock is held past the wait', () => {
@@ -73,4 +73,35 @@ test('setStatus leaves no lock file behind after a successful write', () => {
   const f = tmp();
   setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' }, () => 't');
   assert.equal(fs.existsSync(`${f}.lock`), false);
+});
+
+test('setStatus survives a concurrent reader of status.json (Windows EPERM on rename)', async () => {
+  const { spawn } = await import('node:child_process');
+  const f = tmp();
+  setStatus(f, { batchId: 'b', version: 6, commentId: 'c0', status: 'fixed' });
+  const reader = spawn(process.execPath, ['-e',
+    `const fs=require('fs');const end=Date.now()+1500;while(Date.now()<end){try{fs.readFileSync(process.argv[1],'utf8')}catch{}}`, f], { stdio: 'ignore' });
+  const exited = new Promise((r) => reader.on('exit', r));
+  await new Promise((r) => setTimeout(r, 100));
+  for (let i = 1; i <= 200; i += 1) setStatus(f, { batchId: 'b', version: 6, commentId: `c${i}`, status: 'fixed' });
+  await exited;
+  assert.equal(Object.keys(readStatus(f).batches.b.comments).length, 201);
+});
+
+test('setStatus ignores a lock file that vanished (taken over as stale) on release', () => {
+  const f = tmp();
+  const entry = setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' },
+    () => { fs.unlinkSync(`${f}.lock`); return 't'; });
+  assert.equal(entry.status, 'fixed');
+  assert.equal(readStatus(f).batches.b.comments.c.status, 'fixed');
+});
+
+test('responses documents carry export_id (null when the batch has none)', () => {
+  const f = tmp();
+  setStatus(f, { batchId: 'new', version: 6, exportId: 'e1', commentId: 'a', status: 'fixed' }, () => 't');
+  setStatus(f, { batchId: 'old', version: 5, exportId: null, commentId: 'b', status: 'fixed' }, () => 't');
+  const s = readStatus(f);
+  assert.equal(responsesDoc(s, 'new', () => 'n').export_id, 'e1');
+  assert.equal(responsesDoc(s, 'old', () => 'n').export_id, null);
+  assert.deepEqual(responsesDoc(s, null, () => 'n').responses.map((r) => [r.batch_id, r.export_id]), [['new', 'e1'], ['old', null]]);
 });

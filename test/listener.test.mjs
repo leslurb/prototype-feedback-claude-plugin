@@ -41,3 +41,27 @@ test('a port already in use resolves to null instead of throwing', async () => {
     assert.equal(second, null);
   } finally { first.close(); }
 });
+
+test('a malformed request path gets 400 instead of hanging', async () => {
+  const http = await import('node:http');
+  const srv = await startListener({ port: 0, statusFile: statusFile() });
+  try {
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: srv.address().port, path: '//', headers: { Origin: PUBLISHED_ORIGIN }, timeout: 2000 }, (res) => { res.resume(); resolve(res.statusCode); });
+      req.on('timeout', () => { req.destroy(); reject(new Error('request hung')); });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(status, 400);
+  } finally { srv.close(); }
+});
+
+test('OPTIONS preflight answers 204 with private-network and GET headers', async () => {
+  const srv = await startListener({ port: 0, statusFile: statusFile() });
+  try {
+    const res = await fetch(`http://127.0.0.1:${srv.address().port}/status`, { method: 'OPTIONS', headers: { Origin: PUBLISHED_ORIGIN } });
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get('access-control-allow-private-network'), 'true');
+    assert.match(res.headers.get('access-control-allow-methods'), /GET/);
+  } finally { srv.close(); }
+});
