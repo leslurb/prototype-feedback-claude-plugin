@@ -15,21 +15,56 @@ export function readStatus(file) {
 function writeAtomic(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* tmp may not exist */ }
+    throw e;
+  }
 }
 
-/** Record one comment's status. version = the batch's export schema major (5 or 6). */
-export function setStatus(file, { batchId, version, commentId, status, ...rest }, now = () => new Date().toISOString()) {
+const LOCK_STALE_MS = 10000;
+const LOCK_RETRY_MS = 25;
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** Take `${file}.lock` (exclusive create). Returns the fd. Throws if still held after waitMs. */
+function acquireLock(file, waitMs) {
+  const lock = `${file}.lock`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try { return fs.openSync(lock, 'wx'); }
+    catch (e) { if (e.code !== 'EEXIST') throw e; }
+    try {
+      if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        try { fs.unlinkSync(lock); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        continue;
+      }
+    } catch (e) { if (e.code !== 'ENOENT') throw e; continue; }
+    if (Date.now() >= deadline) throw new Error('status file is locked by another session');
+    sleepMs(LOCK_RETRY_MS);
+  }
+}
+
+/** Record one comment's status. version = the batch's export schema major (5 or 6).
+ *  The whole read-modify-write runs under `${file}.lock` so concurrent sessions cannot drop each other's entries. */
+export function setStatus(file, { batchId, version, commentId, status, ...rest }, now = () => new Date().toISOString(), { waitMs = 2000 } = {}) {
   if (!ALLOWED.includes(status)) throw new Error(`status must be one of ${ALLOWED.join(', ')}`);
   if (!batchId || !commentId) throw new Error('batchId and commentId are required');
-  const s = readStatus(file);
-  const b = (s.batches[batchId] ||= { version, comments: {} });
-  const entry = { status, acted_at: now() };
-  for (const k of FIELDS) if (rest[k] !== undefined && rest[k] !== null) entry[k] = rest[k];
-  b.comments[commentId] = entry;
-  writeAtomic(file, s);
-  return entry;
+  const fd = acquireLock(file, waitMs);
+  try {
+    const s = readStatus(file);
+    const b = (s.batches[batchId] ||= { version, comments: {} });
+    const entry = { status, acted_at: now() };
+    for (const k of FIELDS) if (rest[k] !== undefined && rest[k] !== null) entry[k] = rest[k];
+    b.comments[commentId] = entry;
+    writeAtomic(file, s);
+    return entry;
+  } finally {
+    fs.closeSync(fd);
+    fs.unlinkSync(`${file}.lock`);
+  }
 }
 
 function toResponse(commentId, e, v1) {

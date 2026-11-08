@@ -49,3 +49,28 @@ test('all-batches document (for the listener) is v2 with batch ids', () => {
   assert.equal(all.schema, 'prototype-feedback-response/v2');
   assert.deepEqual(all.responses, [{ comment_id: 'c1', batch_id: 'b1', status: 'answered', answer: 'yes', acted_at: 't' }]);
 });
+
+test('setStatus throws when a fresh lock is held past the wait', () => {
+  const f = tmp();
+  fs.writeFileSync(`${f}.lock`, 'other-session');
+  assert.throws(() => setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' }, () => 't', { waitMs: 100 }), /locked/);
+  assert.ok(fs.existsSync(`${f}.lock`), 'a lock we did not take must not be removed');
+  assert.equal(fs.existsSync(f), false, 'no write happens without the lock');
+});
+
+test('setStatus breaks a lock older than 10 s and writes', () => {
+  const f = tmp();
+  const lock = `${f}.lock`;
+  fs.writeFileSync(lock, 'crashed-session');
+  const past = new Date(Date.now() - 20000);
+  fs.utimesSync(lock, past, past);
+  setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' }, () => 't', { waitMs: 100 });
+  assert.equal(readStatus(f).batches.b.comments.c.status, 'fixed');
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test('setStatus leaves no lock file behind after a successful write', () => {
+  const f = tmp();
+  setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' }, () => 't');
+  assert.equal(fs.existsSync(`${f}.lock`), false);
+});
