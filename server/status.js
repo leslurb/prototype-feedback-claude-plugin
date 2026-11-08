@@ -12,12 +12,24 @@ export function readStatus(file) {
   catch (e) { if (e.code === 'ENOENT') return { version: 1, batches: {} }; throw e; }
 }
 
+const RENAME_RETRY = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+function renameRetry(tmp, file) {
+  for (let n = 1; ; n += 1) {
+    try { return fs.renameSync(tmp, file); }
+    catch (e) {
+      if (!RENAME_RETRY.has(e.code) || n >= 10) throw e;
+      sleepMs(10 + Math.floor(Math.random() * 40)); // a reader holds the target open on Windows
+    }
+  }
+}
+
 function writeAtomic(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
-    fs.renameSync(tmp, file);
+    renameRetry(tmp, file);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* tmp may not exist */ }
     throw e;

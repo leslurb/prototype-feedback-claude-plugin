@@ -74,3 +74,16 @@ test('setStatus leaves no lock file behind after a successful write', () => {
   setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' }, () => 't');
   assert.equal(fs.existsSync(`${f}.lock`), false);
 });
+
+test('setStatus survives a concurrent reader of status.json (Windows EPERM on rename)', async () => {
+  const { spawn } = await import('node:child_process');
+  const f = tmp();
+  setStatus(f, { batchId: 'b', version: 6, commentId: 'c0', status: 'fixed' });
+  const reader = spawn(process.execPath, ['-e',
+    `const fs=require('fs');const end=Date.now()+1500;while(Date.now()<end){try{fs.readFileSync(process.argv[1],'utf8')}catch{}}`, f], { stdio: 'ignore' });
+  const exited = new Promise((r) => reader.on('exit', r));
+  await new Promise((r) => setTimeout(r, 100));
+  for (let i = 1; i <= 200; i += 1) setStatus(f, { batchId: 'b', version: 6, commentId: `c${i}`, status: 'fixed' });
+  await exited;
+  assert.equal(Object.keys(readStatus(f).batches.b.comments).length, 201);
+});
