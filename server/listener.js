@@ -14,9 +14,11 @@ export function startListener({ port = DEFAULT_PORT, statusFile, extraOrigins = 
     const cors = { 'Access-Control-Allow-Origin': origin, Vary: 'Origin', 'Access-Control-Allow-Private-Network': 'true' };
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET' }); res.end(); return; }
     if (req.method !== 'GET') { res.writeHead(405, cors); res.end(); return; }
-    const url = new URL(req.url, 'http://127.0.0.1');
     let body;
     try {
+      let url;
+      try { url = new URL(req.url, 'http://127.0.0.1'); }
+      catch { res.writeHead(400, cors); res.end(); return; }
       if (url.pathname === '/health') body = { ok: true, pid: process.pid };
       else if (url.pathname === '/status') body = responsesDoc(readStatus(statusFile), null);
       else { res.writeHead(404, cors); res.end(); return; }
