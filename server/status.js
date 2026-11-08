@@ -119,3 +119,20 @@ export function responsesDoc(state, batchId, now = () => new Date().toISOString(
   }
   return { schema: 'prototype-feedback-response/v2', responded_at: now(), responses };
 }
+
+function ms(t) { const n = Date.parse(t); return Number.isNaN(n) ? null : n; }
+
+const REOPEN_KINDS = new Set(['reopen', 'reply', 'do_it', 'edit']);
+const REOPEN_STATES = new Set(['not_sent', 'reopened']);
+
+/** True when the reviewer reopened work after Claude acted: status.at (state not_sent/reopened) or a history[].at
+ *  (kind reopen/reply/do_it/edit) is newer than entry.acted_at. Confirm (history 'confirm', state 'confirmed') and with_claude do not count. */
+export function reviewerActedAfter(comment, entry) {
+  const acted = ms(entry && entry.acted_at);
+  if (acted === null) return false;
+  const st = comment && comment.status;
+  const times = [st && REOPEN_STATES.has(st.state) ? st.at : null,
+    ...((comment && Array.isArray(comment.history)) ? comment.history.map((h) => (h && REOPEN_KINDS.has(h.kind) ? h.at : null)) : [])]
+    .map(ms).filter((n) => n !== null);
+  return times.some((t) => t > acted);
+}

@@ -26,6 +26,7 @@ If `inbox_list`, `batch_open` or `status_set` returns an error, show the error t
 ## 2. Open it
 1. Call `batch_open` with the id. It unpacks the batch to `<dir>` and archives the ZIP.
 2. Skip comments that already have a final status in the returned `status` map (fixed, answered, proposed, needs_input, skipped). The map also covers comments handled in earlier exports of the same session (entries have `from_batch`). Skip those the same way, and say in the plan how many were already done.
+   A comment whose `history` has entries newer than its status entry (or that has no status entry) must be worked again. `batch_open` already drops stale status entries, so a comment missing from `status` is open. Read its `history` first (reopen notes, replies, Do it, edits) and treat the newest note as the current instruction.
 3. `version_hints` is keyed by page host: `{ "<host>": { commit?, branch?, source } }`. Use the entry for the comment's host.
    - If it has a `commit` in this repo's history, run `git rev-list --count <commit>..HEAD` and say how many commits the code moved since the reviewed version. Flag comments whose page maps to files changed since then (`git diff --name-only <commit>..HEAD`).
    - If it has only a `branch` that exists locally, compare with `git rev-list --count <branch>..HEAD`.
@@ -41,7 +42,7 @@ If `inbox_list`, `batch_open` or `status_set` returns an error, show the error t
 2. Otherwise, create and check out a branch `feedback/<site>-<YYYY-MM-DD>` from HEAD (`<site>` = the first comment's page host without `www.`, dots → dashes; date in ET). If it exists, add `-2`, `-3`, …
 
 ## 5. Work each comment
-First rule: if the comment's `recipient_resolved` (or `recipient`) is `human`, do not change code or answer it yourself. `status_set` with `status: "needs_input"` and a `question_back` saying it is addressed to a person (name the reviewer if present).
+First rule: apply the "addressed to a person" rule only when `recipient === 'human'` (explicit) and the verb is not `ask`. Then do not change code or answer it yourself. `status_set` with `status: "needs_input"` and a `question_back` saying it is addressed to a person (name the reviewer if present). Ask comments are answered by Claude, even when `recipient_resolved` says `human`.
 
 Per verb:
 - **fix** — something is wrong; decide how to make it right. A thin or empty comment is fine: infer from the screenshot, DOM snapshot and console log. Make the change, then make **one commit per comment** (message: `feedback: <short summary>`). Run `git rev-parse HEAD` right after the commit to get `commit_sha`. Then `status_set` with `status: "fixed"`, `commit_sha`, `summary` (≤120 chars), `files_changed`.

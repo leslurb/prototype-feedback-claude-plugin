@@ -12,7 +12,7 @@ test('skill frontmatter names it feedback with a description', () => {
 });
 
 test('skill covers human recipients, branch lookup, cross-batch status and nullable screenshots', () => {
-  for (const s of ['recipient_resolved', 'git branch --contains', 'from_batch', 'when present']) {
+  for (const s of ['recipient_resolved', "recipient === 'human'", 'history', 'git branch --contains', 'from_batch', 'when present']) {
     assert.ok(skill.includes(s), `SKILL.md must mention ${s}`);
   }
 });

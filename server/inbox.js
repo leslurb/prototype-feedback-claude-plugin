@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readZip } from './zip.js';
 import { normalizeExport } from './normalize.js';
-import { readStatus } from './status.js';
+import { readStatus, reviewerActedAfter } from './status.js';
 
 const FINAL = new Set(['fixed', 'answered', 'proposed', 'needs_input', 'skipped']);
 const EXPORT_RE = /^prototype-feedback_.*\.zip$/;
@@ -49,9 +49,12 @@ function findZip(L, id) {
 export function listBatches(L) {
   const status = readStatus(L.statusFile);
   // A comment is final if ANY batch holds a final status for its id (0.6.0 re-exports reuse comment ids).
-  const finalIds = new Set();
+  // An entry older than the comment's own status.at / latest history[].at in the batch being judged does not count (the reviewer acted after Claude).
+  const finalEntries = new Map();
   for (const b of Object.values(status.batches)) {
-    for (const [cid, e] of Object.entries(b.comments)) if (FINAL.has(e.status)) finalIds.add(cid);
+    for (const [cid, e] of Object.entries(b.comments)) {
+      if (FINAL.has(e.status)) { if (!finalEntries.has(cid)) finalEntries.set(cid, []); finalEntries.get(cid).push(e); }
+    }
   }
   const unpacked = new Set();
   const list = [];
@@ -63,7 +66,7 @@ export function listBatches(L) {
       unpacked.add(id);
       try {
         const norm = normalizeExport(JSON.parse(fs.readFileSync(fj, 'utf8')));
-        const done = norm.comments.every((c) => finalIds.has(c.id));
+        const done = norm.comments.every((c) => (finalEntries.get(c.id) || []).some((e) => !reviewerActedAfter(c, e)));
         list.push({ id, state: done ? 'done' : 'in_progress', source: 'unpacked', version: norm.version,
                     exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, counts: counts(norm.comments) });
       } catch (e) {
