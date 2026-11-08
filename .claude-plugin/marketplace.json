@@ -1,0 +1,8 @@
+{
+  "name": "prototype-feedback",
+  "description": "Prototype Feedback tools for Claude Code",
+  "owner": { "name": "leslurb" },
+  "plugins": [
+    { "name": "pfb", "source": "./", "description": "Prototype Feedback → Claude Code (/pfb:feedback)" }
+  ]
+}

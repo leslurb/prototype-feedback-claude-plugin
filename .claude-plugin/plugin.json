@@ -1,0 +1,9 @@
+{
+  "name": "pfb",
+  "version": "0.1.0",
+  "description": "Work through Prototype Feedback exports in Claude Code with /pfb:feedback, and report status back to the extension.",
+  "author": { "name": "leslurb" },
+  "repository": "https://github.com/leslurb/prototype-feedback-claude-plugin",
+  "license": "MIT",
+  "keywords": ["feedback", "prototype", "review"]
+}
