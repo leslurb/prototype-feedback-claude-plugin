@@ -33,3 +33,17 @@ test('v6 verb and urgent pass through, export_id kept', () => {
 test('rejects unknown schemas', () => {
   assert.throws(() => normalizeExport({ schema: 'something-else', comments: [] }), /not a prototype-feedback export/);
 });
+
+test('export kind, full-export flag and the top-level repo', () => {
+  const base = { schema: 'prototype-feedback/v6', comments: [] };
+  const send = normalizeExport({ ...base, delta: true, export_kind: 'send_claude_code', repo: 'https://github.com/x/r',
+    repo_hints: { 'https://a.dev': { repo: 'https://github.com/x/a' } } });
+  assert.equal(send.exportKind, 'send_claude_code');
+  assert.equal(send.fullExport, false);
+  assert.deepEqual(send.repoUrls, ['https://github.com/x/r', 'https://github.com/x/a']);
+  assert.equal(normalizeExport({ ...base, delta: false, export_kind: 'send_claude_code' }).fullExport, true);
+  assert.equal(normalizeExport({ ...base, delta: true, export_kind: 'zip' }).fullExport, true);
+  assert.equal(normalizeExport({ ...base, delta: true }).fullExport, false, '0.7.0 send without export_kind is a delta');
+  assert.equal(normalizeExport({ ...base }).fullExport, true, 'no delta flag = full export');
+  assert.equal(normalizeExport({ ...base }).exportKind, null);
+});

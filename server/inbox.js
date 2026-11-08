@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readZip } from './zip.js';
 import { normalizeExport } from './normalize.js';
-import { readStatus, reviewerActedAfter } from './status.js';
+import { readStatus, reviewerActedAfter, embeddedDone } from './status.js';
 
 const FINAL = new Set(['fixed', 'answered', 'proposed', 'needs_input', 'skipped']);
 const EXPORT_RE = /^prototype-feedback_.*\.zip$/;
@@ -12,7 +12,7 @@ function readExportFromZip(file) {
   const entries = readZip(fs.readFileSync(file));
   const fj = entries.find((e) => e.name === 'feedback.json');
   if (!fj) throw new Error(`${path.basename(file)} has no feedback.json`);
-  return { entries, norm: normalizeExport(JSON.parse(fj.data.toString('utf8'))) };
+  return { entries, bytes: fj.data.length, norm: normalizeExport(JSON.parse(fj.data.toString('utf8'))) };
 }
 
 function counts(comments) {
@@ -66,7 +66,8 @@ export function listBatches(L) {
       unpacked.add(id);
       try {
         const norm = normalizeExport(JSON.parse(fs.readFileSync(fj, 'utf8')));
-        const done = norm.comments.every((c) => (finalEntries.get(c.id) || []).some((e) => !reviewerActedAfter(c, e)));
+        const done = norm.comments.every((c) => (finalEntries.get(c.id) || []).some((e) => !reviewerActedAfter(c, e))
+          || (norm.fullExport && embeddedDone(c)));
         list.push({ id, state: done ? 'done' : 'in_progress', source: 'unpacked', version: norm.version,
                     exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, counts: counts(norm.comments) });
       } catch (e) {
@@ -110,11 +111,11 @@ export function openBatch(L, id) {
     catch (e) { throw new Error(`batch ${id} is unreadable: ${e.message}`); }
     const leftover = findZip(L, id); // crash between unpack and archive
     if (leftover) archiveZip(L, leftover.file);
-    return { id, dir, ...norm };
+    return { id, dir, bytes: fs.statSync(path.join(dir, 'feedback.json')).size, ...norm };
   }
   const hit = findZip(L, id);
   if (!hit) throw new Error(`no batch with id ${id}`);
-  const { entries, norm } = readExportFromZip(hit.file);
+  const { entries, bytes, norm } = readExportFromZip(hit.file);
   const tmp = `${dir}.unpacking`;
   fs.rmSync(tmp, { recursive: true, force: true });
   try {
@@ -130,5 +131,20 @@ export function openBatch(L, id) {
   }
   fs.renameSync(tmp, dir);
   archiveZip(L, hit.file);
-  return { id, dir, ...norm };
+  return { id, dir, bytes, ...norm };
+}
+
+/** Read a batch without side effects: the unpacked copy if there is one (dir set), else the waiting ZIP (dir null). */
+export function previewBatch(L, id) {
+  if (!validId(id)) throw new Error(`invalid batch id ${id}`);
+  const dir = path.join(L.batches, id);
+  const fj = path.join(dir, 'feedback.json');
+  if (fs.existsSync(fj)) {
+    try { return { id, dir, bytes: fs.statSync(fj).size, ...normalizeExport(JSON.parse(fs.readFileSync(fj, 'utf8'))) }; }
+    catch (e) { throw new Error(`batch ${id} is unreadable: ${e.message}`); }
+  }
+  const hit = findZip(L, id);
+  if (!hit) throw new Error(`no batch with id ${id}`);
+  const { bytes, norm } = readExportFromZip(hit.file);
+  return { id, dir: null, bytes, ...norm };
 }

@@ -105,3 +105,16 @@ test('responses documents carry export_id (null when the batch has none)', () =>
   assert.equal(responsesDoc(s, 'old', () => 'n').export_id, null);
   assert.deepEqual(responsesDoc(s, null, () => 'n').responses.map((r) => [r.batch_id, r.export_id]), [['new', 'e1'], ['old', null]]);
 });
+
+test('embeddedDone honours a final embedded state unless a reopen-type history entry is newer', async () => {
+  const { embeddedDone } = await import('../server/status.js');
+  const at = '2026-11-08T10:00:00Z', later = '2026-11-08T11:00:00Z', earlier = '2026-11-08T09:00:00Z';
+  for (const state of ['confirmed', 'fixed', 'answered', 'proposed']) assert.equal(embeddedDone({ status: { state, at } }), true, state);
+  for (const state of ['needs_input', 'with_claude', 'reopened', 'not_sent']) assert.equal(embeddedDone({ status: { state, at } }), false, state);
+  assert.equal(embeddedDone({}), false);
+  for (const kind of ['reopen', 'reply', 'do_it', 'edit']) {
+    assert.equal(embeddedDone({ status: { state: 'fixed', at }, history: [{ kind, at: later }] }), false, kind);
+    assert.equal(embeddedDone({ status: { state: 'fixed', at }, history: [{ kind, at: earlier }] }), true, kind);
+  }
+  assert.equal(embeddedDone({ status: { state: 'fixed', at }, history: [{ kind: 'confirm', at: later }] }), true);
+});
