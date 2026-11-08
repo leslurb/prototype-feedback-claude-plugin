@@ -42,7 +42,7 @@ export function callTool(L, name, args = {}) {
     const { batch_id, comment_id, status, ...rest } = args;
     const known = !PROTO_KEYS.has(comment_id) && Array.isArray(feedback.comments) && feedback.comments.some((c) => c.id === comment_id);
     if (!known) throw new Error(`unknown comment ${comment_id} in batch ${batch_id}`);
-    const entry = setStatus(L.statusFile, { batchId: batch_id, version, commentId: comment_id, status, ...rest }, undefined, {
+    const entry = setStatus(L.statusFile, { batchId: batch_id, version, commentId: comment_id, exportId: feedback.export_id || null, status, ...rest }, undefined, {
       onWrite: (state) => writeAtomic(path.join(dir, 'responses.json'), responsesDoc(state, batch_id)), // under the status lock
     });
     return { ok: true, entry };

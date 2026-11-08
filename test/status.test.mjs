@@ -47,7 +47,7 @@ test('all-batches document (for the listener) is v2 with batch ids', () => {
   setStatus(f, { batchId: 'b1', version: 6, commentId: 'c1', status: 'answered', answer: 'yes' }, () => 't');
   const all = responsesDoc(readStatus(f), null, () => 'now');
   assert.equal(all.schema, 'prototype-feedback-response/v2');
-  assert.deepEqual(all.responses, [{ comment_id: 'c1', batch_id: 'b1', status: 'answered', answer: 'yes', acted_at: 't' }]);
+  assert.deepEqual(all.responses, [{ comment_id: 'c1', batch_id: 'b1', export_id: null, status: 'answered', answer: 'yes', acted_at: 't' }]);
 });
 
 test('setStatus throws when a fresh lock is held past the wait', () => {
@@ -94,4 +94,14 @@ test('setStatus ignores a lock file that vanished (taken over as stale) on relea
     () => { fs.unlinkSync(`${f}.lock`); return 't'; });
   assert.equal(entry.status, 'fixed');
   assert.equal(readStatus(f).batches.b.comments.c.status, 'fixed');
+});
+
+test('responses documents carry export_id (null when the batch has none)', () => {
+  const f = tmp();
+  setStatus(f, { batchId: 'new', version: 6, exportId: 'e1', commentId: 'a', status: 'fixed' }, () => 't');
+  setStatus(f, { batchId: 'old', version: 5, exportId: null, commentId: 'b', status: 'fixed' }, () => 't');
+  const s = readStatus(f);
+  assert.equal(responsesDoc(s, 'new', () => 'n').export_id, 'e1');
+  assert.equal(responsesDoc(s, 'old', () => 'n').export_id, null);
+  assert.deepEqual(responsesDoc(s, null, () => 'n').responses.map((r) => [r.batch_id, r.export_id]), [['new', 'e1'], ['old', null]]);
 });
