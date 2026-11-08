@@ -18,7 +18,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 ## 0. Preconditions
 1. Run `git rev-parse --is-inside-work-tree`. If it fails, tell the user this command needs a git repo, and stop.
 2. Run `git remote get-url origin`. If it fails, say that repo matching is not possible.
-3. Run `git status --porcelain`. If it prints anything, ask the user to commit or stash first, and stop.
+3. Run `git status --porcelain -- . ':!.pfb'`. The `.pfb/` folder is ignored here, because the brief lives there. If it prints anything, ask the user to commit or stash first, and stop.
 4. Run `git symbolic-ref -q HEAD`. If it prints nothing, HEAD is detached. Tell the user before you create a branch.
 5. Run `git rev-parse --show-toplevel`. This is `<repo>`. Look for `<repo>/.pfb/brief.md`.
 6. If the brief is missing, offer to create it. If the developer agrees, ask one question at a time and offer a default from the repo for each:
@@ -28,7 +28,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    - `test_cmd`, `build_cmd`, `lint_cmd`: from `package.json` scripts (`npm test`, `npm run build`, `npm run lint`) or the CI files (`.github/workflows/`). Empty if none.
    - `preview_url_pattern` (for example `https://myapp-git-{branch}-acme.vercel.app`), `design_system`, `do_not_touch` (globs), `repo` (optional): empty unless the developer gives one.
    - Goals and constraints: prose for the body.
-   Write the file in this format. Do not commit it. Tell the developer they can commit it.
+   Write the file in this format. Do not commit it yourself.
    ```
    ---
    base_branch: main
@@ -43,6 +43,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    ---
    Goals and constraints in prose.
    ```
+   Right after you write the file, ask the developer to commit `.pfb/brief.md` or to add `.pfb/` to `.gitignore`. Do not do either yourself.
 7. If the developer declines, continue without a brief. Step 3 then checks the test command.
 
 ## 1. Pick a batch
@@ -57,11 +58,12 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 2. Show: `export_kind`, `round_note` (what_changed, preview_url, focus, reviewer_is_developer) when present, `session.label` and `session.round` when present, `counts` (total, by verb, urgent, done), and the number of `prior_commits`.
 3. A comment with `done: true` is already handled. Skip it. This covers a final plugin status from an earlier batch of the session (status entries with `from_batch`). For full exports it also covers an embedded `status.state` of confirmed, fixed, answered or proposed with no newer reopen, reply, do_it or edit in `history`. Say how many comments you skip.
 4. Ask the developer to confirm the batch. If `counts.total` is more than 30 or `bytes` is more than 1 MB (1048576), also ask whether to split the work by page. Wait for the answer.
+5. **Repo gate.** Decide now, before `batch_open`, whether this batch belongs to this repo. Compare `repo` and `repoUrls` from `batch_preview` (and the brief `repo`) with the git remote from step 0.2. If one matches, continue. If none matches, or the remote is missing, ask the developer whether to continue with this repo. If the answer is no, stop. Do not call `batch_open`, so the batch is not archived.
 
 ## 3. Open, check, plan, then wait
 1. Call `batch_open` with the id and `repo_dir: "<repo>"`. It unpacks the batch to `<dir>` and archives the ZIP. If `brief_error` is set, show it and ask the developer to fix the brief. Stop.
 2. **Ask-when-missing gate.** Check each item. If one applies, ask the developer, one question at a time. Do not plan until they answer.
-   1. No `repo`, `repoUrls` entry or brief `repo` matches this repo's remote, and you cannot find the comments' page routes or page titles in the code.
+   1. The developer confirmed a repo mismatch in step 2.5, and you cannot find the comments' page routes or page titles in the code.
    2. A `prior_commits` sha is missing, or its branch is unmerged and the brief has no `branch_policy`. Run the checks of step 4.1 now to find out.
    3. There is no brief, or the brief has no `test_cmd`, and no obvious test script exists (`package.json` `test` script, `Makefile` test target, CI test step). Ask how to verify, or whether to work without tests.
    4. Step 2.4 asked about a split and has no answer yet.
@@ -81,8 +83,9 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 ## 4. Branch
 1. For each distinct `commit_sha` in `prior_commits`:
    - Run `git cat-file -e <sha>^{commit}`. If it fails, the commit is **missing**. Ask the developer. Do not continue on a guess.
-   - Run `git merge-base --is-ancestor <sha> HEAD`. Exit code 0 means **merged**.
+   - Run `git merge-base --is-ancestor <sha> <base_branch>`. Exit code 0 means **merged**. Take `<base_branch>` from the brief. Without a brief, use `git symbolic-ref refs/remotes/origin/HEAD`. If that fails too, ask the developer. Do not test against HEAD: HEAD can still be on the branch of the last round.
    - Otherwise run `git branch -a --contains <sha>`. The branches it lists hold the **unmerged** fix.
+   - If the commit exists but no branch contains it (deleted or squash-merged), ask the developer which branch to build on. Do not guess.
 2. Choose the branch with the brief's `branch_policy`:
    - All prior commits merged, or no prior commits: `per_round` and `per_session` create a new branch `feedback/<site>-<YYYY-MM-DD>` from `base_branch` (from HEAD if there is no brief). `current_branch` stays on HEAD.
    - An unmerged prior branch: `per_session` continues on that branch. `per_round` creates the new branch from that branch, so the earlier fixes stay in. `current_branch` stays on HEAD only if HEAD contains the commit. Otherwise ask.

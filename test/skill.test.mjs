@@ -45,14 +45,17 @@ test('skill sections follow the contract order', () => {
 
 test('step 0 reads or offers to create .pfb/brief.md one question at a time with repo defaults', () => {
   const s0 = section(0);
-  for (const s of ['.pfb/brief.md', 'one question at a time', 'package.json', 'base_branch', 'branch_policy', 'test_cmd', 'preview_url_pattern', 'do_not_touch', 'Do not commit it']) at(s, s0);
+  for (const s of ['.pfb/brief.md', 'one question at a time', 'package.json', 'base_branch', 'branch_policy', 'test_cmd', 'preview_url_pattern', 'do_not_touch', 'Do not commit it yourself', '.gitignore']) at(s, s0);
+  at("git status --porcelain -- . ':!.pfb'", s0);
+  assert.ok(at('.gitignore', s0) > at('Write the file in this format', s0), 'commit-or-ignore ask follows the brief write');
   assert.ok(at('git status --porcelain', s0) < at('.pfb/brief.md', s0), 'clean-tree check comes before the brief');
 });
 
 test('step 2 previews with batch_preview, honours done and asks about big batches', () => {
   const s2 = section(2);
   for (const s of ['`batch_preview`', 'does not unpack or archive', 'round_note', 'done: true', 'confirmed, fixed, answered or proposed', 'more than 30', '1 MB']) at(s, s2);
-  assert.equal(s2.includes('`batch_open`'), false, 'preview must not archive');
+  assert.ok(/Repo gate[\s\S]*before `batch_open`/.test(s2), 'repo gate sits in step 2, before batch_open');
+  for (const s of ['repoUrls', 'Do not call `batch_open`']) at(s, s2);
 });
 
 test('the ask-when-missing gate comes before planning and the OK comes before any change', () => {
@@ -72,9 +75,10 @@ test('step 3 states the field pointers for do_it, reopen, reply and edit, and co
 
 test('step 4 classifies prior commits exactly as the contract says', () => {
   const s4 = section(4);
-  const a = at('git cat-file -e <sha>', s4), b = at('git merge-base --is-ancestor <sha> HEAD', s4), c = at('git branch -a --contains <sha>', s4);
+  const a = at('git cat-file -e <sha>', s4), b = at('git merge-base --is-ancestor <sha> <base_branch>', s4), c = at('git branch -a --contains <sha>', s4);
   assert.ok(a < b && b < c, 'missing → merged → unmerged order');
-  for (const s of ['per_round', 'per_session', 'current_branch', 'base_branch', 'ask the developer']) at(s, s4);
+  for (const s of ['per_round', 'per_session', 'current_branch', 'base_branch', 'ask the developer', 'git symbolic-ref refs/remotes/origin/HEAD', 'no branch contains it', 'which branch to build on']) at(s, s4);
+  assert.equal(s4.includes('<sha> HEAD'), false, 'merged is tested against base_branch, not HEAD');
 });
 
 test('step 5 runs tests before each commit and reports verification_url and notes', () => {
