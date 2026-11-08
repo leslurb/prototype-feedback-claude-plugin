@@ -129,3 +129,42 @@ test('a browser-duplicate export name gets a sanitised id and keeps its file nam
   assert.ok(fs.existsSync(path.join(L.batches, 'prototype-feedback_R-1', 'feedback.json')));
   assert.ok(fs.existsSync(path.join(L.archive, 'prototype-feedback_R (1).zip')));
 });
+
+test('a full export whose comments are all confirmed/fixed in the embedded status lists as done', () => {
+  const L = fixture();
+  const at = '2026-11-08T10:00:00Z';
+  const full = { schema: 'prototype-feedback/v6', export_id: 'f1', exported_at: '2026-11-09T00:00:00Z', delta: false, export_kind: 'zip',
+    comments: [{ id: 'd1', verb: 'fix', comment: 'x', page_url: 'https://a.dev/', status: { state: 'confirmed', at } },
+               { id: 'd2', verb: 'ask', comment: 'y', page_url: 'https://a.dev/', status: { state: 'answered', at } }] };
+  fs.writeFileSync(path.join(L.inbox, 'f1.zip'), makeZip({ 'feedback.json': JSON.stringify(full) }));
+  openBatch(L, 'f1');
+  assert.equal(listBatches(L).find((x) => x.id === 'f1').state, 'done');
+  full.export_id = 'f2';
+  full.comments[1].history = [{ kind: 'reply', at: '2026-11-08T12:00:00Z', note: 'and?' }];
+  fs.writeFileSync(path.join(L.inbox, 'f2.zip'), makeZip({ 'feedback.json': JSON.stringify(full) }));
+  openBatch(L, 'f2');
+  assert.equal(listBatches(L).find((x) => x.id === 'f2').state, 'in_progress');
+});
+
+test('a delta send ignores embedded final states for done-ness', () => {
+  const L = fixture();
+  const send = { schema: 'prototype-feedback/v6', export_id: 's1', exported_at: '2026-11-09T00:00:00Z', delta: true, export_kind: 'send_claude_code',
+    comments: [{ id: 'd1', verb: 'fix', comment: 'x', page_url: 'https://a.dev/', status: { state: 'fixed', at: '2026-11-08T10:00:00Z' } }] };
+  fs.writeFileSync(path.join(L.inbox, 's1.zip'), makeZip({ 'feedback.json': JSON.stringify(send) }));
+  openBatch(L, 's1');
+  assert.equal(listBatches(L).find((x) => x.id === 's1').state, 'in_progress');
+});
+
+test('previewBatch reads a waiting zip without unpacking or archiving it', async () => {
+  const { previewBatch } = await import('../server/inbox.js');
+  const L = fixture();
+  const p = previewBatch(L, 'e1');
+  assert.equal(p.dir, null);
+  assert.equal(p.comments[0].id, 'c1');
+  assert.ok(p.bytes > 0);
+  assert.ok(fs.existsSync(path.join(L.inbox, 'send-1.zip')));
+  assert.ok(!fs.existsSync(L.batches));
+  openBatch(L, 'e1');
+  assert.equal(previewBatch(L, 'e1').dir, path.join(L.batches, 'e1'));
+  assert.throws(() => previewBatch(L, 'nope'), /no batch with id nope/);
+});

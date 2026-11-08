@@ -150,3 +150,99 @@ test('status_set rejects notes over 500 chars and a non-http verification_url wi
   assert.deepEqual(readStatus(L.statusFile), { version: 1, batches: {} });
   callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', notes: 'x'.repeat(500) });
 });
+
+const AT = '2026-11-08T10:00:00Z';
+function richExport() {
+  return { schema: 'prototype-feedback/v6', export_id: 'R1', exported_at: '2026-11-08T15:00:00Z', delta: false, export_kind: 'zip',
+    repo: 'https://github.com/o/r', reviewer: 'Ann',
+    session: { id: 's1', label: 'Pricing', round: 2, rounds: [{ n: 1, started_at: AT, build_key: 'b1' }], last_send: AT, previous_export_ids: ['R0'] },
+    prior_commits: [{ comment_id: 'p1', commit_sha: 'abc123', files_changed: ['a.js'], state: 'fixed', acted_at: AT }],
+    round_note: { what_changed: 'new header', preview_url: 'https://a.dev/', focus: 'header only', reviewer_is_developer: false, written_at: AT },
+    console_log: [{ level: 'error', text: 'boom' }],
+    comments: [
+      { id: 'p1', verb: 'fix', urgent: true, comment: 'y'.repeat(300), page_url: 'https://a.dev/p', screenshot_path: 'screenshots/p1.png',
+        status: { state: 'fixed', at: AT }, history: [{ kind: 'reopen', at: '2026-11-08T11:00:00Z', note: 'still off' }], previous_comment: null },
+      { id: 'p2', verb: 'ask', comment: 'why?', page_url: 'https://a.dev/q', status: { state: 'confirmed', at: AT }, history: [{ kind: 'confirm', at: AT }] },
+      { id: 'p3', verb: 'idea', comment: 'maybe', page_url: 'https://a.dev/q', screenshot_error: 'capture failed' },
+    ] };
+}
+
+test('batch_preview returns the compact index without unpacking or archiving', () => {
+  const L = fixture({ r: richExport() });
+  const p = callTool(L, 'batch_preview', { id: 'R1' });
+  assert.equal(p.id, 'R1');
+  assert.equal(p.version, 6);
+  assert.equal(p.export_kind, 'zip');
+  assert.equal(p.full_export, true);
+  assert.equal(p.repo, 'https://github.com/o/r');
+  assert.equal(p.session.round, 2);
+  assert.equal(p.prior_commits[0].commit_sha, 'abc123');
+  assert.equal(p.round_note.reviewer_is_developer, false);
+  assert.equal(p.counts.total, 3);
+  assert.equal(p.counts.done, 1);
+  assert.ok(p.bytes > 0);
+  const [c1, c2, c3] = p.comments;
+  assert.deepEqual(Object.keys(c1).sort(), ['done', 'history_kinds', 'id', 'page_url', 'state', 'text', 'urgent', 'verb']);
+  assert.equal(c1.text.length, 200);
+  assert.deepEqual(c1.history_kinds, ['reopen']);
+  assert.deepEqual([c1.state, c1.done], ['fixed', false], 'reopen newer than the embedded status');
+  assert.deepEqual([c2.state, c2.done], ['confirmed', true]);
+  assert.deepEqual([c3.state, c3.done, c3.text], ['new', false, 'maybe']);
+  assert.equal(p.dir, undefined);
+  assert.ok(fs.existsSync(path.join(L.inbox, 'r.zip')), 'not archived');
+  assert.ok(!fs.existsSync(path.join(L.batches, 'R1')), 'not unpacked');
+});
+
+test('batch_open returns the compact index plus dir, brief and status map', () => {
+  const L = fixture({ r: richExport() });
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-repo-'));
+  fs.mkdirSync(path.join(repoDir, '.git'));
+  fs.mkdirSync(path.join(repoDir, '.pfb'));
+  fs.writeFileSync(path.join(repoDir, '.pfb', 'brief.md'), '---\ntest_cmd: npm test\nbranch_policy: per_round\n---\nGoals.\n');
+  const o = callTool(L, 'batch_open', { id: 'R1', repo_dir: repoDir });
+  assert.equal(o.dir, path.join(L.batches, 'R1'));
+  assert.equal(o.brief.test_cmd, 'npm test');
+  assert.equal(o.brief.branch_policy, 'per_round');
+  assert.equal(o.brief_error, null);
+  assert.deepEqual(o.status, {});
+  assert.equal(o.round_note.focus, 'header only');
+  assert.equal(o.comments.length, 3);
+  assert.equal(o.comments[0].text.length, 200);
+  assert.ok(!fs.existsSync(path.join(L.inbox, 'r.zip')), 'archived');
+  callTool(L, 'status_set', { batch_id: 'R1', comment_id: 'p3', status: 'proposed', proposal: { approach: 'a', effort: 'S', risk: 'low' } });
+  const again = callTool(L, 'batch_open', { id: 'R1', repo_dir: repoDir });
+  assert.equal(again.status.p3.status, 'proposed');
+  assert.deepEqual([again.comments[2].state, again.comments[2].done], ['proposed', true]);
+});
+
+test('batch_open reports a missing brief as null and a malformed one as brief_error', () => {
+  const L = fixture({ r: richExport() });
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-repo-'));
+  fs.mkdirSync(path.join(repoDir, '.git'));
+  const o = callTool(L, 'batch_open', { id: 'R1', repo_dir: repoDir });
+  assert.equal(o.brief, null);
+  assert.equal(o.brief_error, null);
+  fs.mkdirSync(path.join(repoDir, '.pfb'));
+  fs.writeFileSync(path.join(repoDir, '.pfb', 'brief.md'), '---\nnot yaml\n---\n');
+  const bad = callTool(L, 'batch_open', { id: 'R1', repo_dir: repoDir });
+  assert.equal(bad.brief, null);
+  assert.match(bad.brief_error, /brief\.md: line 2/);
+});
+
+test('comment_get returns one full comment, before and after batch_open', () => {
+  const L = fixture({ r: richExport() });
+  const before = callTool(L, 'comment_get', { batch_id: 'R1', comment_id: 'p3' });
+  assert.equal(before.dir, null);
+  assert.equal(before.comment.screenshot_error, 'capture failed');
+  assert.ok(fs.existsSync(path.join(L.inbox, 'r.zip')), 'comment_get does not archive');
+  const { dir } = callTool(L, 'batch_open', { id: 'R1', repo_dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-norepo-')) });
+  const after = callTool(L, 'comment_get', { batch_id: 'R1', comment_id: 'p1' });
+  assert.equal(after.dir, dir);
+  assert.equal(after.comment.comment.length, 300);
+  assert.equal(after.comment.screenshot_path, 'screenshots/p1.png');
+  assert.equal(after.comment.verb, 'fix');
+  assert.equal(after.status, null);
+  assert.throws(() => callTool(L, 'comment_get', { batch_id: 'R1', comment_id: 'zz' }), /unknown comment zz in batch R1/);
+  assert.throws(() => callTool(L, 'comment_get', { batch_id: 'R1', comment_id: '__proto__' }), /unknown comment/);
+  assert.throws(() => callTool(L, 'comment_get', { batch_id: '../x', comment_id: 'p1' }), /invalid batch id/);
+});

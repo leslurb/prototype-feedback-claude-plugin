@@ -11,7 +11,12 @@ export function normalizeExport(json) {
     verb: VERBS.has(c.verb) ? c.verb : (INTENT_TO_VERB[c.intent] || 'fix'),
     urgent: typeof c.urgent === 'boolean' ? c.urgent : c.severity === 'high',
   }));
-  const repoUrls = [...new Set(Object.values(json.repo_hints || {}).map((h) => h && h.repo).filter(Boolean))];
+  const repoUrls = [...new Set([typeof json.repo === 'string' ? json.repo : null,
+    ...Object.values(json.repo_hints || {}).map((h) => h && h.repo)].filter(Boolean))];
+  const exportKind = typeof json.export_kind === 'string' ? json.export_kind : null;
+  // Handoff v2 §2: a full export is `delta: false` or any export_kind other than send_claude_code.
+  // A 0.7.0 send has delta: true and no export_kind; no delta flag at all (v5, manual exports) counts as full.
+  const fullExport = json.delta !== true || (exportKind !== null && exportKind !== 'send_claude_code');
   return { version, exportId: json.export_id || null, exportedAt: json.exported_at || null,
-           reviewer: json.reviewer || null, repoUrls, comments, raw: json };
+           reviewer: json.reviewer || null, repoUrls, exportKind, fullExport, comments, raw: json };
 }

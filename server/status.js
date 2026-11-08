@@ -139,3 +139,15 @@ export function reviewerActedAfter(comment, entry) {
     .map(ms).filter((n) => n !== null);
   return times.some((t) => t > acted);
 }
+
+const EMBEDDED_DONE = new Set(['confirmed', 'fixed', 'answered', 'proposed']);
+
+/** Handoff v2 §2 (full exports): the comment's embedded status.state is final (confirmed/fixed/answered/proposed)
+ *  and no history entry of kind reopen/reply/do_it/edit is newer than status.at. */
+export function embeddedDone(comment) {
+  const st = comment && comment.status;
+  if (!st || !EMBEDDED_DONE.has(st.state)) return false;
+  const at = ms(st.at);
+  const hist = Array.isArray(comment.history) ? comment.history : [];
+  return !hist.some((h) => h && REOPEN_KINDS.has(h.kind) && (at === null || (ms(h.at) !== null && ms(h.at) > at)));
+}

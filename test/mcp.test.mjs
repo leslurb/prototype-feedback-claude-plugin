@@ -40,7 +40,7 @@ test('initialize, list tools, open a batch and set status over stdio', async () 
     assert.equal(init.result.protocolVersion, '2025-06-18');
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const tools = await call('tools/list', {});
-    assert.deepEqual(tools.result.tools.map((t) => t.name).sort(), ['batch_open', 'inbox_list', 'status_set']);
+    assert.deepEqual(tools.result.tools.map((t) => t.name).sort(), ['batch_open', 'batch_preview', 'comment_get', 'inbox_list', 'status_set']);
     const list = JSON.parse((await call('tools/call', { name: 'inbox_list', arguments: {} })).result.content[0].text);
     assert.equal(list.batches[0].id, 'e1');
     const opened = JSON.parse((await call('tools/call', { name: 'batch_open', arguments: { id: 'e1' } })).result.content[0].text);
