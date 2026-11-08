@@ -11,6 +11,12 @@ test('skill frontmatter names it feedback with a description', () => {
   assert.match(fm, /^description: .{40,}$/m);
 });
 
+test('skill covers human recipients, branch lookup, cross-batch status and nullable screenshots', () => {
+  for (const s of ['recipient_resolved', 'git branch --contains', 'from_batch', 'when present']) {
+    assert.ok(skill.includes(s), `SKILL.md must mention ${s}`);
+  }
+});
+
 test('skill uses every MCP tool and the agreed workflow rules', () => {
   for (const s of ['inbox_list', 'batch_open', 'status_set', 'feedback/', 'git status --porcelain',
                    'one commit per comment', 'needs_input', 'proposed', 'Import status']) {

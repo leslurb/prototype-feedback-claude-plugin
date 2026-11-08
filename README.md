@@ -4,7 +4,7 @@ Work through feedback pinned with the [Prototype Feedback](https://chromewebstor
 
 ## Install
 
-Needs Claude Code and Node.js 18+ (`node --version`).
+Needs Claude Code and Node.js 18+ (21+ to run the plugin's own tests) (`node --version`).
 
 ```bash
 claude plugin marketplace add leslurb/prototype-feedback-claude-plugin
