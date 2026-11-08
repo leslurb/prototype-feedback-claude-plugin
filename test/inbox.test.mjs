@@ -56,6 +56,62 @@ test('opening an already unpacked batch returns it without touching archive', ()
   openBatch(L, 'e1');
   const again = openBatch(L, 'e1');
   assert.equal(again.comments.length, 1);
+  assert.deepEqual(fs.readdirSync(L.archive), ['send-1.zip']);
+});
+
+test('a corrupt unpacked feedback.json is listed as error and hides nothing else', () => {
+  const L = fixture();
+  openBatch(L, 'e1');
+  fs.mkdirSync(path.join(L.batches, 'bad'), { recursive: true });
+  fs.writeFileSync(path.join(L.batches, 'bad', 'feedback.json'), '{not json');
+  const list = listBatches(L);
+  assert.equal(list.find((x) => x.id === 'bad').state, 'error');
+  assert.equal(list.find((x) => x.id === 'bad').source, 'unpacked');
+  assert.equal(list.find((x) => x.id === 'e1').state, 'in_progress');
+  assert.throws(() => openBatch(L, 'bad'), /batch bad is unreadable/);
+});
+
+test('a corrupt export zip in Downloads is listed as error', () => {
+  const L = fixture();
+  fs.writeFileSync(path.join(L.downloads, 'prototype-feedback_bad.zip'), 'garbage');
+  const bad = listBatches(L).find((x) => x.id === 'prototype-feedback_bad');
+  assert.equal(bad.state, 'error');
+  assert.equal(bad.source, 'export');
+});
+
+test('a leftover .unpacking folder is not listed', () => {
+  const L = fixture();
+  fs.mkdirSync(path.join(L.batches, 'x.unpacking'), { recursive: true });
+  fs.writeFileSync(path.join(L.batches, 'x.unpacking', 'feedback.json'), '{}');
+  assert.ok(!listBatches(L).some((b) => b.id.endsWith('.unpacking')));
+});
+
+test('two inbox zips with the same export_id give one waiting and one error', () => {
+  const L = fixture();
+  fs.copyFileSync(path.join(L.inbox, 'send-1.zip'), path.join(L.inbox, 'send-2.zip'));
+  const list = listBatches(L).filter((b) => b.source === 'inbox');
+  assert.deepEqual(list.map((b) => b.state).sort(), ['error', 'waiting']);
+  assert.match(list.find((b) => b.state === 'error').error, /duplicate batch id e1/);
+});
+
+test('an unsafe export_id is an error and cannot be opened', () => {
+  const L = fixture();
+  const evil = { schema: 'prototype-feedback/v6', export_id: '../evil', exported_at: '2026-11-09T00:00:00Z',
+    comments: [{ id: 'c1', verb: 'fix', comment: 'x', page_url: 'https://a.dev/' }] };
+  fs.writeFileSync(path.join(L.inbox, 'evil.zip'), makeZip({ 'feedback.json': JSON.stringify(evil) }));
+  const e = listBatches(L).find((b) => b.id === 'evil');
+  assert.equal(e.state, 'error');
+  assert.match(e.error, /invalid batch id/);
+  assert.throws(() => openBatch(L, '../evil'), /invalid batch id/);
+});
+
+test('a zip left behind next to an unpacked batch is archived on open', () => {
+  const L = fixture();
+  openBatch(L, 'e1');
+  fs.copyFileSync(path.join(L.archive, 'send-1.zip'), path.join(L.inbox, 'send-1.zip'));
+  openBatch(L, 'e1');
+  assert.ok(!fs.existsSync(path.join(L.inbox, 'send-1.zip')));
+  assert.deepEqual(fs.readdirSync(L.archive).sort(), ['send-1-1.zip', 'send-1.zip']);
 });
 
 test('unknown id throws a clear error', () => {

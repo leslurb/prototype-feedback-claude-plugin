@@ -29,60 +29,99 @@ function zipCandidates(L) {
 }
 
 const idFor = (norm, file) => norm.exportId || path.basename(file, '.zip');
+const validId = (id) => typeof id === 'string' && /^[A-Za-z0-9][\w.-]*$/.test(id) && !id.endsWith('.unpacking');
 
-/** Waiting ZIPs plus unpacked batches, newest first. Unreadable ZIPs are listed with an error, never hidden. */
+function archiveZip(L, file) {
+  fs.mkdirSync(L.archive, { recursive: true });
+  const base = path.basename(file, '.zip');
+  let target = path.join(L.archive, `${base}.zip`);
+  for (let n = 1; fs.existsSync(target); n += 1) target = path.join(L.archive, `${base}-${n}.zip`);
+  fs.renameSync(file, target);
+}
+
+function findZip(L, id) {
+  return zipCandidates(L).find(({ file }) => {
+    try { return idFor(readExportFromZip(file).norm, file) === id; } catch { return false; }
+  });
+}
+
+/** Waiting ZIPs plus unpacked batches, newest first. Unreadable entries are listed with an error, never hidden. */
 export function listBatches(L) {
   const status = readStatus(L.statusFile);
-  const seen = new Set();
+  const unpacked = new Set();
   const list = [];
   if (fs.existsSync(L.batches)) {
     for (const id of fs.readdirSync(L.batches)) {
+      if (id.endsWith('.unpacking')) continue;
       const fj = path.join(L.batches, id, 'feedback.json');
       if (!fs.existsSync(fj)) continue;
-      const norm = normalizeExport(JSON.parse(fs.readFileSync(fj, 'utf8')));
-      const st = status.batches[id]?.comments || {};
-      const done = norm.comments.every((c) => FINAL.has(st[c.id]?.status));
-      list.push({ id, state: done ? 'done' : 'in_progress', source: 'unpacked', version: norm.version,
-                  exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, counts: counts(norm.comments) });
-      seen.add(id);
+      unpacked.add(id);
+      try {
+        const norm = normalizeExport(JSON.parse(fs.readFileSync(fj, 'utf8')));
+        const st = status.batches[id]?.comments || {};
+        const done = norm.comments.every((c) => FINAL.has(st[c.id]?.status));
+        list.push({ id, state: done ? 'done' : 'in_progress', source: 'unpacked', version: norm.version,
+                    exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, counts: counts(norm.comments) });
+      } catch (e) {
+        list.push({ id, state: 'error', source: 'unpacked', error: e.message });
+      }
     }
   }
+  const waiting = [];
   for (const { file, source } of zipCandidates(L)) {
     try {
       const { norm } = readExportFromZip(file);
       const id = idFor(norm, file);
-      if (seen.has(id)) continue;
-      list.push({ id, state: 'waiting', source, version: norm.version, exportedAt: norm.exportedAt,
-                  repoUrls: norm.repoUrls, counts: counts(norm.comments), file });
+      if (!validId(id)) throw new Error(`invalid batch id ${id}`);
+      waiting.push({ id, state: 'waiting', source, version: norm.version, exportedAt: norm.exportedAt,
+                     repoUrls: norm.repoUrls, counts: counts(norm.comments), file });
     } catch (e) {
-      if (source === 'inbox') list.push({ id: path.basename(file, '.zip'), state: 'error', source, error: e.message, file });
+      list.push({ id: path.basename(file, '.zip'), state: 'error', source, error: e.message, file });
     }
   }
-  return list.sort((a, b) => String(b.exportedAt || '').localeCompare(String(a.exportedAt || '')));
+  const byNewest = (a, b) => String(b.exportedAt || '').localeCompare(String(a.exportedAt || ''));
+  const taken = new Set();
+  for (const w of waiting.sort(byNewest)) {
+    if (unpacked.has(w.id)) continue;
+    if (taken.has(w.id)) {
+      list.push({ id: path.basename(w.file, '.zip'), state: 'error', source: w.source, error: `duplicate batch id ${w.id}`, file: w.file });
+      continue;
+    }
+    taken.add(w.id);
+    list.push(w);
+  }
+  return list.sort(byNewest);
 }
 
 /** Unpack a waiting batch into batches/<id>/ and move its ZIP to archive/; return the normalised export. */
 export function openBatch(L, id) {
+  if (!validId(id)) throw new Error(`invalid batch id ${id}`);
   const dir = path.join(L.batches, id);
   if (fs.existsSync(path.join(dir, 'feedback.json'))) {
-    const norm = normalizeExport(JSON.parse(fs.readFileSync(path.join(dir, 'feedback.json'), 'utf8')));
+    let norm;
+    try { norm = normalizeExport(JSON.parse(fs.readFileSync(path.join(dir, 'feedback.json'), 'utf8'))); }
+    catch (e) { throw new Error(`batch ${id} is unreadable: ${e.message}`); }
+    const leftover = findZip(L, id); // crash between unpack and archive
+    if (leftover) archiveZip(L, leftover.file);
     return { id, dir, ...norm };
   }
-  const hit = zipCandidates(L).find(({ file }) => {
-    try { return idFor(readExportFromZip(file).norm, file) === id; } catch { return false; }
-  });
+  const hit = findZip(L, id);
   if (!hit) throw new Error(`no batch with id ${id}`);
   const { entries, norm } = readExportFromZip(hit.file);
   const tmp = `${dir}.unpacking`;
   fs.rmSync(tmp, { recursive: true, force: true });
-  for (const e of entries) {
-    const dest = path.join(tmp, ...e.name.split('/'));
-    if (!path.resolve(dest).startsWith(path.resolve(tmp) + path.sep)) throw new Error(`unsafe path in ${path.basename(hit.file)}: ${e.name}`);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, e.data);
+  try {
+    for (const e of entries) {
+      const dest = path.join(tmp, ...e.name.split('/'));
+      if (!path.resolve(dest).startsWith(path.resolve(tmp) + path.sep)) throw new Error(`unsafe path in ${path.basename(hit.file)}: ${e.name}`);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, e.data);
+    }
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw e;
   }
   fs.renameSync(tmp, dir);
-  fs.mkdirSync(L.archive, { recursive: true });
-  fs.renameSync(hit.file, path.join(L.archive, path.basename(hit.file)));
+  archiveZip(L, hit.file);
   return { id, dir, ...norm };
 }
