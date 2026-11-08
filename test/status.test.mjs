@@ -87,3 +87,11 @@ test('setStatus survives a concurrent reader of status.json (Windows EPERM on re
   await exited;
   assert.equal(Object.keys(readStatus(f).batches.b.comments).length, 201);
 });
+
+test('setStatus ignores a lock file that vanished (taken over as stale) on release', () => {
+  const f = tmp();
+  const entry = setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' },
+    () => { fs.unlinkSync(`${f}.lock`); return 't'; });
+  assert.equal(entry.status, 'fixed');
+  assert.equal(readStatus(f).batches.b.comments.c.status, 'fixed');
+});

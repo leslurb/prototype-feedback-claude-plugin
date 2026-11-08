@@ -75,7 +75,7 @@ export function setStatus(file, { batchId, version, commentId, status, ...rest }
     return entry;
   } finally {
     fs.closeSync(fd);
-    fs.unlinkSync(`${file}.lock`);
+    try { fs.unlinkSync(`${file}.lock`); } catch (e) { if (e.code !== 'ENOENT') throw e; } // taken over as stale
   }
 }
 
