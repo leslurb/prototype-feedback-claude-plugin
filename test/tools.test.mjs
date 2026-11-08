@@ -129,3 +129,24 @@ test('an edit history entry newer than acted_at drops the entry', () => {
   assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1, undefined);
   assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'in_progress');
 });
+
+test('status_set stores verification_url and notes and writes them to responses.json', () => {
+  const L = fixture({ s: v6('e1', ['c1']) });
+  const { dir } = callTool(L, 'batch_open', { id: 'e1' });
+  const { entry } = callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', commit_sha: 'abc',
+    verification_url: 'https://app-git-feedback-a.vercel.app/p', notes: 'Kept the old token; the design system has no new one.' });
+  assert.equal(entry.verification_url, 'https://app-git-feedback-a.vercel.app/p');
+  assert.equal(entry.notes, 'Kept the old token; the design system has no new one.');
+  const r = JSON.parse(fs.readFileSync(path.join(dir, 'responses.json'), 'utf8')).responses[0];
+  assert.equal(r.verification_url, 'https://app-git-feedback-a.vercel.app/p');
+  assert.equal(r.notes, 'Kept the old token; the design system has no new one.');
+});
+
+test('status_set rejects notes over 500 chars and a non-http verification_url without writing', () => {
+  const L = fixture({ s: v6('e1', ['c1']) });
+  callTool(L, 'batch_open', { id: 'e1' });
+  assert.throws(() => callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', notes: 'x'.repeat(501) }), /notes/);
+  assert.throws(() => callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', verification_url: 'javascript:alert(1)' }), /verification_url/);
+  assert.deepEqual(readStatus(L.statusFile), { version: 1, batches: {} });
+  callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', notes: 'x'.repeat(500) });
+});

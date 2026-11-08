@@ -5,7 +5,8 @@ export const ALLOWED = ['fixed', 'answered', 'proposed', 'needs_input', 'skipped
 // 0.6.0's importer knows only v1 names and maps unknown ones to pending (spec §6).
 const V1_NAME = { fixed: 'shipped', skipped: 'wontfix', proposed: 'deferred',
                   answered: 'answered', needs_input: 'needs_input', in_progress: 'in_progress' };
-const FIELDS = ['summary', 'answer', 'question_back', 'commit_sha', 'proposal', 'files_changed'];
+const FIELDS = ['summary', 'answer', 'question_back', 'commit_sha', 'proposal', 'files_changed', 'verification_url', 'notes'];
+export const NOTES_MAX = 500;
 
 export function readStatus(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -64,6 +65,8 @@ function acquireLock(file, waitMs) {
 export function setStatus(file, { batchId, version, exportId = null, commentId, status, ...rest }, now = () => new Date().toISOString(), { waitMs = 2000, onWrite } = {}) {
   if (!ALLOWED.includes(status)) throw new Error(`status must be one of ${ALLOWED.join(', ')}`);
   if (!batchId || !commentId) throw new Error('batchId and commentId are required');
+  if (rest.notes != null && (typeof rest.notes !== 'string' || rest.notes.length > NOTES_MAX)) throw new Error(`notes must be a string of at most ${NOTES_MAX} chars`);
+  if (rest.verification_url != null && !/^https?:\/\/\S+$/i.test(String(rest.verification_url))) throw new Error('verification_url must be an http(s) URL');
   const fd = acquireLock(file, waitMs);
   try {
     const s = readStatus(file);

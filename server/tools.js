@@ -14,6 +14,8 @@ export const TOOLS = [
       batch_id: { type: 'string' }, comment_id: { type: 'string' }, status: { type: 'string', enum: ALLOWED },
       summary: { type: 'string' }, answer: { type: 'string' }, question_back: { type: 'string' }, commit_sha: { type: 'string' },
       files_changed: { type: 'array', items: { type: 'string' } },
+      verification_url: { type: 'string', description: 'Preview URL of the fixed build (from the brief preview_url_pattern).' },
+      notes: { type: 'string', maxLength: 500, description: 'Rationale for the developer and reviewer (at most 500 chars).' },
       proposal: { type: 'object', properties: { approach: { type: 'string' }, effort: { type: 'string', enum: ['S', 'M', 'L'] }, risk: { type: 'string' } } } } } },
 ];
 
