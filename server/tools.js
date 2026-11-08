@@ -17,14 +17,19 @@ export const TOOLS = [
       proposal: { type: 'object', properties: { approach: { type: 'string' }, effort: { type: 'string', enum: ['S', 'M', 'L'] }, risk: { type: 'string' } } } } } },
 ];
 
+const ID_RE = /^[A-Za-z0-9][\w.-]*$/;
+function checkId(id) { if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`invalid batch id ${id}`); }
+
 export function callTool(L, name, args = {}) {
   if (name === 'inbox_list') return { root: L.root, batches: listBatches(L) };
   if (name === 'batch_open') {
+    checkId(args.id);
     const b = openBatch(L, args.id);
     return { id: b.id, dir: b.dir, version: b.version, exportedAt: b.exportedAt, reviewer: b.reviewer, repoUrls: b.repoUrls,
              version_hints: b.raw.version_hints || null, comments: b.comments, status: readStatus(L.statusFile).batches[b.id]?.comments || {} };
   }
   if (name === 'status_set') {
+    checkId(args.batch_id);
     const dir = path.join(L.batches, args.batch_id);
     const fj = path.join(dir, 'feedback.json');
     if (!fs.existsSync(fj)) throw new Error(`batch ${args.batch_id} is not open; call batch_open first`);

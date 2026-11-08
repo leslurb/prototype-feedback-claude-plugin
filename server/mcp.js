@@ -17,6 +17,7 @@ startListener({ port, statusFile: L.statusFile, log })
 function handle(msg) {
   const { id, method, params = {} } = msg;
   if (id === undefined) return; // notification
+  if (typeof id !== 'string' && typeof id !== 'number') return send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request' } });
   try {
     if (method === 'initialize') {
       return send({ jsonrpc: '2.0', id, result: {
@@ -45,6 +46,9 @@ rl.on('line', (line) => {
   if (!line.trim()) return;
   let msg;
   try { msg = JSON.parse(line); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }); }
-  handle(msg);
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request' } });
+  try { handle(msg); } catch (e) { log(`pfb: handler error: ${e.message}`); }
 });
+process.on('uncaughtException', (e) => log(`pfb: uncaught: ${e.message}`));
+process.stdout.on('error', () => process.exit(0));
 rl.on('close', () => process.exit(0));

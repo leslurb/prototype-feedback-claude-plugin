@@ -56,3 +56,24 @@ test('initialize, list tools, open a batch and set status over stdio', async () 
     assert.equal(unknown.error.code, -32601);
   } finally { child.kill(); }
 });
+
+test('survives malformed input and rejects bad batch ids', async () => {
+  const dl = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-mcp-'));
+  const child = spawn(process.execPath, [SERVER], { env: { ...process.env, PFB_DOWNLOADS: dl, PFB_PORT: '0' } });
+  const lines = []; let buf = '';
+  child.stdout.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { lines.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); } });
+  const until = async (n) => { for (let k = 0; k < 200 && lines.length < n; k++) await new Promise((r) => setTimeout(r, 25)); };
+  try {
+    for (const l of ['null', '[]', '{"jsonrpc":"2.0","id":null,"method":"ping"}', '{oops',
+      '{"jsonrpc":"2.0","id":0,"method":"ping"}', '{"jsonrpc":"2.0","id":"s1","method":"ping"}']) child.stdin.write(l + '\n');
+    await until(6);
+    assert.deepEqual(lines.slice(0, 3).map((m) => m.error.code), [-32600, -32600, -32600]);
+    assert.equal(lines[3].error.code, -32700);
+    assert.deepEqual(lines[4], { jsonrpc: '2.0', id: 0, result: {} });
+    assert.deepEqual(lines[5], { jsonrpc: '2.0', id: 's1', result: {} });
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'status_set', arguments: { batch_id: '../x', comment_id: 'c', status: 'fixed' } } }) + '\n');
+    await until(7);
+    assert.equal(lines[6].result.isError, true);
+    assert.match(lines[6].result.content[0].text, /invalid batch id/);
+  } finally { child.kill(); }
+});
