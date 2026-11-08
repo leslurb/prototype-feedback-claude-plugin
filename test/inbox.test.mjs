@@ -117,3 +117,15 @@ test('a zip left behind next to an unpacked batch is archived on open', () => {
 test('unknown id throws a clear error', () => {
   assert.throws(() => openBatch(fixture(), 'nope'), /no batch with id nope/);
 });
+
+test('a browser-duplicate export name gets a sanitised id and keeps its file name in archive', () => {
+  const L = fixture();
+  const v5 = { schema: 'prototype-feedback/v5', exported_at: '2026-11-07T00:00:00Z',
+    comments: [{ id: 'k1', intent: 'question', comment: 'why?', page_url: 'https://b.dev/' }] };
+  fs.writeFileSync(path.join(L.downloads, 'prototype-feedback_R (1).zip'), makeZip({ 'feedback.json': JSON.stringify(v5) }));
+  const w = listBatches(L).find((b) => b.id === 'prototype-feedback_R-1');
+  assert.equal(w.state, 'waiting');
+  openBatch(L, 'prototype-feedback_R-1');
+  assert.ok(fs.existsSync(path.join(L.batches, 'prototype-feedback_R-1', 'feedback.json')));
+  assert.ok(fs.existsSync(path.join(L.archive, 'prototype-feedback_R (1).zip')));
+});

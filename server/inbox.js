@@ -28,7 +28,7 @@ function zipCandidates(L) {
   return out;
 }
 
-const idFor = (norm, file) => norm.exportId || path.basename(file, '.zip');
+const idFor = (norm, file) => norm.exportId || path.basename(file, '.zip').replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
 const validId = (id) => typeof id === 'string' && /^[A-Za-z0-9][\w.-]*$/.test(id) && !id.endsWith('.unpacking');
 
 function archiveZip(L, file) {
