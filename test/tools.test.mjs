@@ -62,3 +62,43 @@ test('setStatus runs onWrite while the lock is still held', () => {
   assert.equal(lockedDuring, true);
   assert.equal(fs.existsSync(`${f}.lock`), false);
 });
+
+test('a reviewer reopen newer than Claude\'s status drops the old status and keeps the batch in progress', () => {
+  const L = fixture({ a: v6('A', ['k1']) });
+  callTool(L, 'batch_open', { id: 'A' });
+  callTool(L, 'status_set', { batch_id: 'A', comment_id: 'k1', status: 'fixed' });
+  const acted = readStatus(L.statusFile).batches.A.comments.k1.acted_at;
+  const later = new Date(Date.parse(acted) + 60000).toISOString();
+  const reopened = v6('B', ['k1'], later);
+  reopened.comments[0].status = { state: 'reopened', at: later, source: 'reviewer' };
+  reopened.comments[0].history = [{ at: later, kind: 'reopen', note: 'still broken' }];
+  fs.writeFileSync(path.join(L.inbox, 'b.zip'), makeZip({ 'feedback.json': JSON.stringify(reopened) }));
+  assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1, undefined);
+  assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'in_progress');
+});
+
+test('history newer than Claude\'s status alone also drops it', () => {
+  const L = fixture({ a: v6('A', ['k1']) });
+  callTool(L, 'batch_open', { id: 'A' });
+  callTool(L, 'status_set', { batch_id: 'A', comment_id: 'k1', status: 'fixed' });
+  const acted = readStatus(L.statusFile).batches.A.comments.k1.acted_at;
+  const later = new Date(Date.parse(acted) + 60000).toISOString();
+  const j = v6('B', ['k1'], later);
+  j.comments[0].history = [{ at: later, kind: 'reply', note: 'also x' }];
+  fs.writeFileSync(path.join(L.inbox, 'b.zip'), makeZip({ 'feedback.json': JSON.stringify(j) }));
+  assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1, undefined);
+});
+
+test('a re-sent comment without newer status or history keeps the old entry', () => {
+  const L = fixture({ a: v6('A', ['k1']) });
+  callTool(L, 'batch_open', { id: 'A' });
+  callTool(L, 'status_set', { batch_id: 'A', comment_id: 'k1', status: 'fixed' });
+  const acted = readStatus(L.statusFile).batches.A.comments.k1.acted_at;
+  const earlier = new Date(Date.parse(acted) - 60000).toISOString();
+  const j = v6('B', ['k1']);
+  j.comments[0].status = { state: 'with_claude', at: earlier, source: 'claude_code' };
+  j.comments[0].history = [{ at: earlier, kind: 'reply', note: 'old' }];
+  fs.writeFileSync(path.join(L.inbox, 'b.zip'), makeZip({ 'feedback.json': JSON.stringify(j) }));
+  assert.equal(callTool(L, 'batch_open', { id: 'B' }).status.k1.status, 'fixed');
+  assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'done');
+});

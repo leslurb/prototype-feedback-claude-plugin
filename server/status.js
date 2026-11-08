@@ -119,3 +119,14 @@ export function responsesDoc(state, batchId, now = () => new Date().toISOString(
   }
   return { schema: 'prototype-feedback-response/v2', responded_at: now(), responses };
 }
+
+function ms(t) { const n = Date.parse(t); return Number.isNaN(n) ? null : n; }
+
+/** True when the reviewer acted after Claude did: the comment's exported status.at or its latest history[].at is newer than entry.acted_at. */
+export function reviewerActedAfter(comment, entry) {
+  const acted = ms(entry && entry.acted_at);
+  if (acted === null) return false;
+  const times = [comment && comment.status && comment.status.at, ...((comment && Array.isArray(comment.history)) ? comment.history.map((h) => h && h.at) : [])]
+    .map(ms).filter((n) => n !== null);
+  return times.some((t) => t > acted);
+}
