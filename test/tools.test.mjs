@@ -6,7 +6,7 @@ import path from 'node:path';
 import { layout } from '../server/paths.js';
 import { callTool } from '../server/tools.js';
 import { listBatches } from '../server/inbox.js';
-import { readStatus } from '../server/status.js';
+import { readStatus, setStatus } from '../server/status.js';
 import { makeZip } from './helpers/makezip.mjs';
 
 function fixture(exports) {
@@ -42,4 +42,23 @@ test('status follows the comment across re-exports', () => {
   callTool(L, 'status_set', { batch_id: 'B', comment_id: 'k2', status: 'fixed' });
   assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'done');
   assert.equal(readStatus(L.statusFile).batches.B.comments.k1, undefined, 'statuses are not copied between batches');
+});
+
+test('status_set writes responses.json atomically (no tmp files left)', () => {
+  const L = fixture({ s: v6('e1', ['c1']) });
+  const { dir } = callTool(L, 'batch_open', { id: 'e1' });
+  callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed' });
+  const doc = JSON.parse(fs.readFileSync(path.join(dir, 'responses.json'), 'utf8'));
+  assert.deepEqual(doc.responses.map((r) => [r.comment_id, r.status]), [['c1', 'fixed']]);
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), []);
+  assert.deepEqual(fs.readdirSync(path.dirname(L.statusFile)).filter((n) => n.endsWith('.tmp') || n.endsWith('.lock')), []);
+});
+
+test('setStatus runs onWrite while the lock is still held', () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-ow-')), 'status.json');
+  let lockedDuring;
+  setStatus(f, { batchId: 'b', version: 6, commentId: 'c', status: 'fixed' }, undefined,
+    { onWrite: (state) => { lockedDuring = fs.existsSync(`${f}.lock`) && state.batches.b.comments.c.status === 'fixed'; } });
+  assert.equal(lockedDuring, true);
+  assert.equal(fs.existsSync(`${f}.lock`), false);
 });

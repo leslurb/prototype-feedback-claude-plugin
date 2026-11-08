@@ -24,7 +24,7 @@ function renameRetry(tmp, file) {
   }
 }
 
-function writeAtomic(file, obj) {
+export function writeAtomic(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
@@ -61,7 +61,7 @@ function acquireLock(file, waitMs) {
 
 /** Record one comment's status. version = the batch's export schema major (5 or 6).
  *  The whole read-modify-write runs under `${file}.lock` so concurrent sessions cannot drop each other's entries. */
-export function setStatus(file, { batchId, version, commentId, status, ...rest }, now = () => new Date().toISOString(), { waitMs = 2000 } = {}) {
+export function setStatus(file, { batchId, version, commentId, status, ...rest }, now = () => new Date().toISOString(), { waitMs = 2000, onWrite } = {}) {
   if (!ALLOWED.includes(status)) throw new Error(`status must be one of ${ALLOWED.join(', ')}`);
   if (!batchId || !commentId) throw new Error('batchId and commentId are required');
   const fd = acquireLock(file, waitMs);
@@ -72,6 +72,7 @@ export function setStatus(file, { batchId, version, commentId, status, ...rest }
     for (const k of FIELDS) if (rest[k] !== undefined && rest[k] !== null) entry[k] = rest[k];
     b.comments[commentId] = entry;
     writeAtomic(file, s);
+    if (onWrite) onWrite(s); // still under the lock
     return entry;
   } finally {
     fs.closeSync(fd);
