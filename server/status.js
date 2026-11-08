@@ -79,6 +79,17 @@ export function setStatus(file, { batchId, version, commentId, status, ...rest }
   }
 }
 
+/** Per comment id, the entry with the latest acted_at across ALL batches (a re-export reuses comment ids), tagged with from_batch. */
+export function latestByComment(state) {
+  const out = Object.create(null);
+  for (const [bid, b] of Object.entries(state.batches)) {
+    for (const [cid, e] of Object.entries(b.comments)) {
+      if (!out[cid] || String(e.acted_at) >= String(out[cid].acted_at)) out[cid] = { ...e, from_batch: bid };
+    }
+  }
+  return out;
+}
+
 function toResponse(commentId, e, v1) {
   const r = { comment_id: commentId, status: v1 ? V1_NAME[e.status] : e.status };
   for (const k of FIELDS) if (e[k] !== undefined) r[k] = e[k];

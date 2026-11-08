@@ -29,3 +29,17 @@ test('status_set rejects a comment id that is not in the batch', () => {
   }
   assert.deepEqual(readStatus(L.statusFile), { version: 1, batches: {} });
 });
+test('status follows the comment across re-exports', () => {
+  const L = fixture({ a: v5(['k1']) });
+  callTool(L, 'batch_open', { id: 'a' });
+  callTool(L, 'status_set', { batch_id: 'a', comment_id: 'k1', status: 'fixed', summary: 'done' });
+  fs.writeFileSync(path.join(L.inbox, 'b.zip'), makeZip({ 'feedback.json': JSON.stringify(v6('B', ['k1', 'k2'])) }));
+  const opened = callTool(L, 'batch_open', { id: 'B' });
+  assert.equal(opened.status.k1.status, 'fixed');
+  assert.equal(opened.status.k1.from_batch, 'a');
+  assert.equal(opened.status.k2, undefined);
+  assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'in_progress');
+  callTool(L, 'status_set', { batch_id: 'B', comment_id: 'k2', status: 'fixed' });
+  assert.equal(listBatches(L).find((b) => b.id === 'B').state, 'done');
+  assert.equal(readStatus(L.statusFile).batches.B.comments.k1, undefined, 'statuses are not copied between batches');
+});

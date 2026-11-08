@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listBatches, openBatch } from './inbox.js';
-import { readStatus, setStatus, responsesDoc, ALLOWED } from './status.js';
+import { readStatus, setStatus, responsesDoc, latestByComment, ALLOWED } from './status.js';
 
 export const TOOLS = [
   { name: 'inbox_list', description: 'List Prototype Feedback batches: waiting (inbox + 0.6.0 exports in Downloads), in progress and done, newest first.',
@@ -26,8 +26,11 @@ export function callTool(L, name, args = {}) {
   if (name === 'batch_open') {
     checkId(args.id);
     const b = openBatch(L, args.id);
+    const latest = latestByComment(readStatus(L.statusFile));
+    const status = {};
+    for (const c of b.comments) if (latest[c.id]) status[c.id] = latest[c.id];
     return { id: b.id, dir: b.dir, version: b.version, exportedAt: b.exportedAt, reviewer: b.reviewer, repoUrls: b.repoUrls,
-             version_hints: b.raw.version_hints || null, comments: b.comments, status: readStatus(L.statusFile).batches[b.id]?.comments || {} };
+             version_hints: b.raw.version_hints || null, comments: b.comments, status };
   }
   if (name === 'status_set') {
     checkId(args.batch_id);

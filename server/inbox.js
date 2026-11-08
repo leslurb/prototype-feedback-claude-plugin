@@ -48,6 +48,11 @@ function findZip(L, id) {
 /** Waiting ZIPs plus unpacked batches, newest first. Unreadable entries are listed with an error, never hidden. */
 export function listBatches(L) {
   const status = readStatus(L.statusFile);
+  // A comment is final if ANY batch holds a final status for its id (0.6.0 re-exports reuse comment ids).
+  const finalIds = new Set();
+  for (const b of Object.values(status.batches)) {
+    for (const [cid, e] of Object.entries(b.comments)) if (FINAL.has(e.status)) finalIds.add(cid);
+  }
   const unpacked = new Set();
   const list = [];
   if (fs.existsSync(L.batches)) {
@@ -58,8 +63,7 @@ export function listBatches(L) {
       unpacked.add(id);
       try {
         const norm = normalizeExport(JSON.parse(fs.readFileSync(fj, 'utf8')));
-        const st = status.batches[id]?.comments || {};
-        const done = norm.comments.every((c) => FINAL.has(st[c.id]?.status));
+        const done = norm.comments.every((c) => finalIds.has(c.id));
         list.push({ id, state: done ? 'done' : 'in_progress', source: 'unpacked', version: norm.version,
                     exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, counts: counts(norm.comments) });
       } catch (e) {
