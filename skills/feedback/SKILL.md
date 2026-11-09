@@ -5,7 +5,7 @@ description: Work through Prototype Feedback batches (pinned review comments wit
 
 # /pfb:feedback
 
-Work through feedback that reviewers pinned on a prototype with the Prototype Feedback Chrome extension. Tools come from the `pfb` MCP server: `inbox_list`, `batch_preview`, `batch_open`, `comment_get`, `status_set`. If those tools are missing, tell the user the plugin's MCP server did not start and that it needs `node` on PATH (`node --version`), then stop.
+Work through feedback that reviewers pinned on a prototype with the Prototype Feedback Chrome extension. Tools come from the `pfb` MCP server: `inbox_list`, `batch_preview`, `batch_open`, `comment_get`, `status_set`, `repo_remember`. If those tools are missing, tell the user the plugin's MCP server did not start and that it needs `node` on PATH (`node --version`), then stop.
 
 If a pfb tool returns an error, show the error to the user and stop. Never continue as if it succeeded.
 

@@ -1,10 +1,13 @@
 // server/mcp.js
 // Minimal MCP server over stdio: newline-delimited JSON-RPC 2.0. No dependencies.
 import readline from 'node:readline';
+import { readFileSync } from 'node:fs';
 import { layout, downloadsDir } from './paths.js';
 import { TOOLS, callTool } from './tools.js';
 import { startListener, DEFAULT_PORT } from './listener.js';
 
+// One version source: .claude-plugin/plugin.json (bumped on every user-visible change).
+const PLUGIN_VERSION = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version;
 const L = layout(downloadsDir());
 const log = (m) => process.stderr.write(`${m}\n`);
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
@@ -23,7 +26,7 @@ function handle(msg) {
       return send({ jsonrpc: '2.0', id, result: {
         protocolVersion: params.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'pfb', version: '0.1.0' } } });
+        serverInfo: { name: 'pfb', version: PLUGIN_VERSION } } });
     }
     if (method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });
     if (method === 'tools/list') return send({ jsonrpc: '2.0', id, result: { tools: TOOLS } });

@@ -24,3 +24,15 @@ test('mcp config starts the bundled server from the plugin root', () => {
 test('marketplace has a description', () => {
   assert.equal(j('.claude-plugin/marketplace.json').description, 'Prototype Feedback tools for Claude Code');
 });
+
+test('the MCP server reports the plugin.json version, and the skill intro lists every tool', async () => {
+  // fleet #10: Claude Code caches plugins by version, so every user-visible change bumps
+  // plugin.json; the MCP serverInfo must not drift from it.
+  const { readFileSync } = await import('node:fs');
+  const m = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+  const mcp = readFileSync(new URL('../server/mcp.js', import.meta.url), 'utf8');
+  assert.ok(mcp.includes(`version: '${m.version}'`) || /version: PLUGIN_VERSION/.test(mcp), 'mcp.js serverInfo version matches plugin.json');
+  const { TOOLS } = await import('../server/tools.js');
+  const intro = readFileSync(new URL('../skills/feedback/SKILL.md', import.meta.url), 'utf8').split('\n').find((l) => l.startsWith('Work through feedback'));
+  for (const t of TOOLS) assert.ok(intro.includes(`\`${t.name}\``), `SKILL intro lists ${t.name}`);
+});
