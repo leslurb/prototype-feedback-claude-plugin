@@ -121,3 +121,38 @@ export function readBrief(startDir = process.cwd()) {
     return { path: file, ...fields, body };
   } catch (e) { throw new Error(`${file}: ${e.message}`); }
 }
+
+/** Add hosts to the brief's `page_hosts` (handoff: remember a confirmed repo match).
+ *  Rewrites only that key, as one flow list, just before the closing `---`; the rest of the file is kept byte for byte.
+ *  Throws when there is no brief (the developer creates it first) or it is malformed. Returns { path, page_hosts, added }. */
+export function addBriefHosts(startDir, hosts) {
+  const brief = readBrief(startDir);
+  if (!brief) throw new Error('no .pfb/brief.md in this repo; create the brief first');
+  const text = fs.readFileSync(brief.path, 'utf8');
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const old = Array.isArray(brief.page_hosts) ? brief.page_hosts : [];
+  const merged = [...new Set([...old, ...hosts.map((h) => String(h).toLowerCase())])].sort();
+  const added = merged.filter((h) => !old.includes(h));
+  if (!added.length) return { path: brief.path, page_hosts: merged, added };
+  let end = lines.indexOf('---', 1);
+  let out;
+  if (lines[0] !== '---' || end < 0) {
+    out = ['---', `page_hosts: ${JSON.stringify(merged).replace(/,/g, ', ')}`, '---', ...lines];
+  } else {
+    const keep = [];
+    let inList = false;
+    for (let i = 1; i < end; i += 1) {
+      const l = lines[i];
+      if (/^page_hosts:/.test(l)) { inList = true; continue; }
+      if (inList && /^\s+-/.test(l)) continue;
+      inList = false;
+      keep.push(l);
+    }
+    out = ['---', ...keep, `page_hosts: ${JSON.stringify(merged).replace(/,/g, ', ')}`, ...lines.slice(end)];
+  }
+  const tmp = `${brief.path}.tmp`;
+  fs.writeFileSync(tmp, out.join(eol));
+  fs.renameSync(tmp, brief.path);
+  return { path: brief.path, page_hosts: merged, added };
+}

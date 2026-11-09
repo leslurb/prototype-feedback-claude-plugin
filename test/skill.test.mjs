@@ -55,7 +55,7 @@ test('step 2 previews with batch_preview, honours done and asks about big batche
   const s2 = section(2);
   for (const s of ['`batch_preview`', 'does not unpack or archive', 'round_note', 'done: true', 'confirmed, fixed, answered or proposed', 'more than 30', '1 MB']) at(s, s2);
   assert.ok(/Repo gate[\s\S]*before `batch_open`/.test(s2), 'repo gate sits in step 2, before batch_open');
-  for (const s of ['repoUrls', 'Do not call `batch_open`']) at(s, s2);
+  for (const s of ['repo_match', 'repo_remember', 'Do not call `batch_open`']) at(s, s2);
 });
 
 test('the ask-when-missing gate comes before planning and the OK comes before any change', () => {
@@ -93,4 +93,8 @@ test('step 6 picks the return path from reviewer_is_developer and export_kind', 
   const s6 = section(6);
   for (const s of ['round_note.reviewer_is_developer', 'export_kind', '<dir>/responses.json', 'More → **Import status**', 'update on their own', 'open_pr']) at(s, s6);
   at('Do not merge', s6);
+  // A Send-to-Claude-Code batch only comes from 0.7.0+, so its report must not send the developer to Import status.
+  const auto = s6.slice(at('Otherwise (the batch came from **Send to Claude Code**', s6));
+  assert.ok(!/0\.6\.0/.test(auto.split('\n')[0]), 'no 0.6.0 instructions on the automatic path');
+  at('Do not mention Import status', s6);
 });

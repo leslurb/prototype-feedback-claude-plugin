@@ -9,9 +9,18 @@ export const DEFAULT_PORT = 41837;
 export function startListener({ port = DEFAULT_PORT, statusFile, extraOrigins = process.env.PFB_EXTRA_ORIGINS, log = () => {} }) {
   const allowed = new Set([PUBLISHED_ORIGIN, ...String(extraOrigins || '').split(',').map((s) => s.trim()).filter(Boolean)]);
   const srv = http.createServer((req, res) => {
+    // Only 127.0.0.1 / localhost by name: a DNS-rebinding page arrives with its own host name.
+    const port = srv.address().port;
+    if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(String(req.headers.host || '').toLowerCase())) {
+      res.writeHead(403); res.end('forbidden'); return;
+    }
     const origin = req.headers.origin;
-    if (!origin || !allowed.has(origin)) { res.writeHead(403); res.end('forbidden'); return; }
-    const cors = { 'Access-Control-Allow-Origin': origin, Vary: 'Origin', 'Access-Control-Allow-Private-Network': 'true' };
+    if (origin ? !allowed.has(origin) : !['none', undefined].includes(req.headers['sec-fetch-site'])) {
+      // No Origin is fine only when no web page sent the request: an extension holding a host permission
+      // (Chrome then omits Origin and sends Sec-Fetch-Site: none) or a local tool. Pages always send one of them.
+      res.writeHead(403); res.end('forbidden'); return;
+    }
+    const cors = origin ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin', 'Access-Control-Allow-Private-Network': 'true' } : {};
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET' }); res.end(); return; }
     if (req.method !== 'GET') { res.writeHead(405, cors); res.end(); return; }
     let body;

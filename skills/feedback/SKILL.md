@@ -27,6 +27,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    - `open_pr`: `false`.
    - `test_cmd`, `build_cmd`, `lint_cmd`: from `package.json` scripts (`npm test`, `npm run build`, `npm run lint`) or the CI files (`.github/workflows/`). Empty if none.
    - `preview_url_pattern` (for example `https://myapp-git-{branch}-acme.vercel.app`), `design_system`, `do_not_touch` (globs), `repo` (optional): empty unless the developer gives one.
+   - `page_hosts`: do not ask. `repo_remember` fills it later (step 2.5).
    - Goals and constraints: prose for the body.
    Write the file in this format. Do not commit it yourself.
    ```
@@ -40,6 +41,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    preview_url_pattern: ""
    design_system: ""
    do_not_touch: []
+   page_hosts: []
    ---
    Goals and constraints in prose.
    ```
@@ -47,18 +49,18 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 7. If the developer declines, continue without a brief. Step 3 then checks the test command.
 
 ## 1. Pick a batch
-1. Call `inbox_list`. Show the batches as a short table: id, state (waiting / in_progress / done / error), exported date in ET, comment counts by verb (fix, change, ask, idea) and urgent count.
+1. Call `inbox_list` with `repo_dir: "<repo>"`. Show the batches as a short table: id, state (waiting / in_progress / done / error), exported date in ET, comment counts by verb (fix, change, ask, idea) and urgent count.
 2. For a batch in state `error`, show its error text and tell the user the file could not be read. Do not pick it for work.
-3. Put batches whose `repoUrls` match this repo's git remote (compare host + owner/repo, ignore `.git` and protocol) first. Mark them "this repo". If the remote is missing, mark none.
+3. Put batches with `repo_match.match: true` first and mark them "this repo". `repo_match.by` says why: `remote` (the export names this repo), `prior_commit` (an earlier fix of this session is in this repo) or `page_hosts` (the developer confirmed these pages before). Do not compare URLs yourself.
 4. If there are no waiting or in-progress batches, say so, and say where exports are read from (`<Downloads>/prototype-feedback/inbox/` and `prototype-feedback_*.zip` in Downloads). Stop.
 5. Ask the user which batch to work on. Default to the newest matching one. If no batch matches this repo, do not pick a default: ask.
 
 ## 2. Preview it
-1. Call `batch_preview` with the id. It does not unpack or archive anything.
+1. Call `batch_preview` with the id and `repo_dir: "<repo>"`. It does not unpack or archive anything.
 2. Show: `export_kind`, `round_note` (what_changed, preview_url, focus, reviewer_is_developer) when present, `session.label` and `session.round` when present, `counts` (total, by verb, urgent, done), and the number of `prior_commits`.
 3. A comment with `done: true` is already handled. Skip it. This covers a final plugin status from an earlier batch of the session (status entries with `from_batch`). For full exports it also covers an embedded `status.state` of confirmed, fixed, answered or proposed with no newer reopen, reply, do_it or edit in `history`. Say how many comments you skip.
 4. Ask the developer to confirm the batch. If `counts.total` is more than 30 or `bytes` is more than 1 MB (1048576), also ask whether to split the work by page. Wait for the answer.
-5. **Repo gate.** Decide now, before `batch_open`, whether this batch belongs to this repo. Compare `repo` and `repoUrls` from `batch_preview` (and the brief `repo`) with the git remote from step 0.2. If one matches, continue. If none matches, or the remote is missing, ask the developer whether to continue with this repo. If the answer is no, stop. Do not call `batch_open`, so the batch is not archived.
+5. **Repo gate.** Decide now, before `batch_open`, whether this batch belongs to this repo. If `repo_match.match` is `true`, continue and name the reason in one line (`repo_match.by`). If it is `false`, ask the developer whether to continue with this repo. If the answer is no, stop. Do not call `batch_open`, so the batch is not archived. If the answer is yes and the brief exists, call `repo_remember` with the batch id and `repo_dir: "<repo>"`, and tell the developer that later batches from `page_hosts` will match without this question (the brief changed, so they may want to commit it). If there is no brief, say that the question will come back until a brief exists.
 
 ## 3. Open, check, plan, then wait
 1. Call `batch_open` with the id and `repo_dir: "<repo>"`. It unpacks the batch to `<dir>` and archives the ZIP. If `brief_error` is set, show it and ask the developer to fix the brief. Stop.
@@ -120,5 +122,5 @@ Call `status_set` right after each comment, not at the end, so status reaches th
 2. If the brief has `open_pr: true`, ask the developer whether to push the branch and open a PR. Do it only after a yes.
 3. Tell the developer how the reviewer gets the result:
    - If `round_note.reviewer_is_developer` is `false`, or the batch came from a manual export (`export_kind` is zip, html, drive or email, or `export_kind` is null and `inbox_list` showed source `export`): tell the developer to send `<dir>/responses.json` to the reviewer (name them if `reviewer` is set). The reviewer opens the extension popup → More → **Import status** and picks that file.
-   - Otherwise: with extension 0.7.0+ and Claude Code open, the pins update on their own. With extension 0.6.0, open the popup → **Import status** (Import resolutions) and pick `<dir>/responses.json`.
+   - Otherwise (the batch came from **Send to Claude Code**, which only extension 0.7.0+ has): say that the reviewer's pins update on their own while a Claude Code session with this plugin is open. If no session is open, they update the next time one starts. Do not mention Import status.
 4. Do not merge the branch; merging is the user's call.
