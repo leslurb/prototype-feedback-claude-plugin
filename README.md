@@ -30,4 +30,6 @@ Everything lives in your Downloads folder (override with `PFB_DOWNLOADS`):
 | `prototype-feedback/archive/` | ZIPs after unpacking |
 | `prototype-feedback/status.json` | per-comment status |
 
+If Chrome's "Ask where to save each file" setting is on, Chrome asks where to save even for "Send to Claude Code". Save into `Downloads/prototype-feedback/inbox/`, or turn the setting off. A ZIP saved anywhere else is not found by `/pfb:feedback`.
+
 While a Claude Code session is open, the plugin serves status read-only on `127.0.0.1:41837` to the extension only (Origin check). Nothing leaves your machine.
