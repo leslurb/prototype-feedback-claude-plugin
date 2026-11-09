@@ -92,7 +92,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    - All prior commits merged, or no prior commits: `per_round` and `per_session` create a new branch `feedback/<site>-<YYYY-MM-DD>` from `base_branch` (from HEAD if there is no brief). `current_branch` stays on HEAD.
    - An unmerged prior branch: `per_session` continues on that branch. `per_round` creates the new branch from that branch, so the earlier fixes stay in. `current_branch` stays on HEAD only if HEAD contains the commit. Otherwise ask.
    - No `branch_policy`, or more than one branch holds the commits: ask the developer which branch to use. Do not start a fresh branch from HEAD without asking.
-3. `<site>` = the first comment's page host without `www.`, dots → dashes; date in ET. If the branch exists, add `-2`, `-3`, …
+3. `<site>` = the first comment's page host without `www.` and without a `:port`, dots → dashes (so `localhost:5173` → `localhost`); date in ET. If the branch exists, add `-2`, `-3`, …
 
 ## 5. Work each comment
 Before you start a comment, `status_set` with `status: "in_progress"`. Do not touch files that match the brief's `do_not_touch`. If a fix needs them, ask the developer. Follow the brief's `design_system` when it is set.

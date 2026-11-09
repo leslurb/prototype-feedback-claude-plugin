@@ -18,7 +18,10 @@ export function startListener({ port = DEFAULT_PORT, statusFile, extraOrigins = 
     if (origin ? !allowed.has(origin) : !['none', undefined].includes(req.headers['sec-fetch-site'])) {
       // No Origin is fine only when no web page sent the request: an extension holding a host permission
       // (Chrome then omits Origin and sends Sec-Fetch-Site: none) or a local tool. Pages always send one of them.
-      res.writeHead(403); res.end('forbidden'); return;
+      // An unknown extension (a dev build) may read the refusal, so it can say "refused (HTTP 403)"
+      // instead of "not running". The body carries no data; web pages still get no CORS grant.
+      const ext = origin && /^chrome-extension:\/\/[a-z0-9]+$/i.test(origin) ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {};
+      res.writeHead(403, ext); res.end('forbidden'); return;
     }
     const cors = origin ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin', 'Access-Control-Allow-Private-Network': 'true' } : {};
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET' }); res.end(); return; }

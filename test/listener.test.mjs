@@ -101,3 +101,18 @@ test('a Host other than 127.0.0.1 or localhost is refused (DNS rebinding)', asyn
     assert.equal((await rawGet(port, { Host: `127.0.0.1:${port}`, Origin: PUBLISHED_ORIGIN })).statusCode, 200);
   } finally { srv.close(); }
 });
+
+test('an unknown extension gets a readable 403, a web page does not', async () => {
+  // 2026-11-09 E2E: the 403 carried no CORS header, so the extension saw "Failed to fetch" and its
+  // "refused this extension (HTTP 403)" message (with the help link for PFB_EXTRA_ORIGINS) never showed.
+  const srv = await startListener({ port: 0, statusFile: statusFile() });
+  const port = srv.address().port;
+  try {
+    const ext = await rawGet(port, { Origin: 'chrome-extension://unknowndevbuild' });
+    assert.equal(ext.statusCode, 403);
+    assert.equal(ext.headers['access-control-allow-origin'], 'chrome-extension://unknowndevbuild', 'extension can read the 403');
+    const page = await rawGet(port, { Origin: 'https://evil.example' });
+    assert.equal(page.statusCode, 403);
+    assert.equal(page.headers['access-control-allow-origin'], undefined, 'a web page cannot even read the refusal');
+  } finally { srv.close(); }
+});
