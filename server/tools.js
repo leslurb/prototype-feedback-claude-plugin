@@ -34,6 +34,17 @@ const PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const ID_RE = /^[A-Za-z0-9][\w.-]*$/;
 function checkId(id) { if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`invalid batch id ${id}`); }
 
+/** The full batch id for an exact id or a unique prefix of at least 6 characters (as shown in short tables). */
+function resolveId(L, id) {
+  checkId(id);
+  const ids = [...new Set(listBatches(L).filter((b) => b.state !== 'error').map((b) => b.id))];
+  if (ids.includes(id)) return id;
+  const hits = id.length >= 6 ? ids.filter((x) => x.startsWith(id)) : [];
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) throw new Error(`batch id ${id} is ambiguous: ${hits.join(', ')}`);
+  return id; // unknown: the caller reports "no batch with id"
+}
+
 const FINAL = new Set(['fixed', 'answered', 'proposed', 'needs_input', 'skipped']);
 const TEXT_MAX = 200;
 
@@ -87,7 +98,7 @@ export function callTool(L, name, args = {}) {
     return { root: L.root, batches };
   }
   if (name === 'batch_preview') {
-    checkId(args.id);
+    args = { ...args, id: resolveId(L, args.id) };
     const b = previewBatch(L, args.id);
     const idx = compactIndex(b, statusMap(L, b.comments));
     const hosts = pageHosts(b.comments);
@@ -96,27 +107,27 @@ export function callTool(L, name, args = {}) {
     return { ...idx, page_hosts: hosts, repo_match };
   }
   if (name === 'repo_remember') {
-    checkId(args.batch_id);
+    args = { ...args, batch_id: resolveId(L, args.batch_id) };
     const b = previewBatch(L, args.batch_id);
     const hosts = pageHosts(b.comments);
     if (!hosts.length) throw new Error(`batch ${args.batch_id} has no page URLs to remember`);
     return addBriefHosts(args.repo_dir || process.cwd(), hosts);
   }
   if (name === 'batch_open') {
-    checkId(args.id);
+    args = { ...args, id: resolveId(L, args.id) };
     const b = openBatch(L, args.id);
     const status = statusMap(L, b.comments);
     return { ...compactIndex(b, status), dir: b.dir, ...briefFor(args.repo_dir || process.cwd()), status };
   }
   if (name === 'comment_get') {
-    checkId(args.batch_id);
+    args = { ...args, batch_id: resolveId(L, args.batch_id) };
     const b = previewBatch(L, args.batch_id);
     const c = PROTO_KEYS.has(args.comment_id) ? undefined : b.comments.find((x) => x.id === args.comment_id);
     if (!c) throw new Error(`unknown comment ${args.comment_id} in batch ${args.batch_id}`);
     return { batch_id: b.id, dir: b.dir, comment: c, status: statusMap(L, [c])[c.id] || null };
   }
   if (name === 'status_set') {
-    checkId(args.batch_id);
+    args = { ...args, batch_id: resolveId(L, args.batch_id) };
     const dir = path.join(L.batches, args.batch_id);
     const fj = path.join(dir, 'feedback.json');
     if (!fs.existsSync(fj)) throw new Error(`batch ${args.batch_id} is not open; call batch_open first`);

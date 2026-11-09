@@ -246,3 +246,15 @@ test('comment_get returns one full comment, before and after batch_open', () => 
   assert.throws(() => callTool(L, 'comment_get', { batch_id: 'R1', comment_id: '__proto__' }), /unknown comment/);
   assert.throws(() => callTool(L, 'comment_get', { batch_id: '../x', comment_id: 'p1' }), /invalid batch id/);
 });
+
+test('a unique id prefix of 6+ chars resolves to the full batch id; ambiguous or short ones do not', () => {
+  // 2026-11-08 headless run: `/pfb:feedback bf66a6f0` failed with "no batch with id bf66a6f0".
+  const L = fixture({ a: v6('bf66a6f0-13f9-4a20-ac53-128d892afe01', ['c1']), b: v6('bf66a6ff-0000-4000-8000-000000000000', ['c1']), c: v6('1ccdd245-8a41', ['c1']) });
+  assert.equal(callTool(L, 'batch_preview', { id: 'bf66a6f0' }).id, 'bf66a6f0-13f9-4a20-ac53-128d892afe01');
+  assert.throws(() => callTool(L, 'batch_preview', { id: 'bf66a6' }), /ambiguous: .*bf66a6f0.*bf66a6ff|ambiguous: .*bf66a6ff.*bf66a6f0/);
+  assert.throws(() => callTool(L, 'batch_preview', { id: '1ccdd' }), /no batch with id 1ccdd/);
+  const opened = callTool(L, 'batch_open', { id: '1ccdd245' });
+  assert.equal(opened.id, '1ccdd245-8a41');
+  assert.equal(callTool(L, 'comment_get', { batch_id: '1ccdd245', comment_id: 'c1' }).batch_id, '1ccdd245-8a41');
+  assert.equal(callTool(L, 'status_set', { batch_id: '1ccdd245', comment_id: 'c1', status: 'fixed' }).entry.status, 'fixed');
+});
