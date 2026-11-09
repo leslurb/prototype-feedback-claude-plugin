@@ -21,7 +21,6 @@ test('serves /status and /health to the extension origin only', async () => {
     assert.deepEqual(doc.responses.map((r) => [r.batch_id, r.comment_id, r.status]), [['b1', 'c1', 'fixed']]);
     assert.equal((await fetch(`${base}/health`, { headers: { Origin: PUBLISHED_ORIGIN } })).status, 200);
     assert.equal((await fetch(`${base}/status`, { headers: { Origin: 'https://evil.example' } })).status, 403);
-    assert.equal((await fetch(`${base}/status`)).status, 403);
     assert.equal((await fetch(`${base}/status`, { method: 'POST', headers: { Origin: PUBLISHED_ORIGIN } })).status, 405);
   } finally { srv.close(); }
 });
@@ -63,5 +62,42 @@ test('OPTIONS preflight answers 204 with private-network and GET headers', async
     assert.equal(res.status, 204);
     assert.equal(res.headers.get('access-control-allow-private-network'), 'true');
     assert.match(res.headers.get('access-control-allow-methods'), /GET/);
+  } finally { srv.close(); }
+});
+
+const rawGet = async (port, headers) => {
+  const http = await import('node:http');
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/status', headers, timeout: 2000 }, (res) => { res.resume(); resolve(res); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('request hung')); });
+    req.on('error', reject);
+    req.end();
+  });
+};
+
+test('a request with no Origin is served when it did not come from a web page', async () => {
+  // 2026-11-08 mocked loop: Chrome sends no Origin (Sec-Fetch-Site: none) when the extension holds a
+  // host permission for 127.0.0.1, so the listener answered 403 and status never came back.
+  const srv = await startListener({ port: 0, statusFile: statusFile() });
+  const port = srv.address().port;
+  try {
+    const ext = await rawGet(port, { 'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'cors' });
+    assert.equal(ext.statusCode, 200);
+    assert.equal(ext.headers['access-control-allow-origin'], undefined, 'no CORS grant without an Origin');
+    assert.equal((await rawGet(port, {})).statusCode, 200, 'local tools (curl) send neither header');
+    for (const site of ['same-origin', 'same-site', 'cross-site']) {
+      assert.equal((await rawGet(port, { 'Sec-Fetch-Site': site })).statusCode, 403, `page request (${site}) without Origin`);
+    }
+  } finally { srv.close(); }
+});
+
+test('a Host other than 127.0.0.1 or localhost is refused (DNS rebinding)', async () => {
+  const srv = await startListener({ port: 0, statusFile: statusFile() });
+  const port = srv.address().port;
+  try {
+    assert.equal((await rawGet(port, { Host: `evil.example:${port}`, Origin: PUBLISHED_ORIGIN })).statusCode, 403);
+    assert.equal((await rawGet(port, { Host: `evil.example:${port}` })).statusCode, 403);
+    assert.equal((await rawGet(port, { Host: `localhost:${port}`, Origin: PUBLISHED_ORIGIN })).statusCode, 200);
+    assert.equal((await rawGet(port, { Host: `127.0.0.1:${port}`, Origin: PUBLISHED_ORIGIN })).statusCode, 200);
   } finally { srv.close(); }
 });
