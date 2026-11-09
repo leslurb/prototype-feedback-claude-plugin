@@ -4,6 +4,13 @@ import path from 'node:path';
 import { readZip } from './zip.js';
 import { normalizeExport } from './normalize.js';
 import { readStatus, reviewerActedAfter, embeddedDone } from './status.js';
+import { pageHosts } from './repo-match.js';
+
+/** Repo-match inputs of a batch: its page hosts and the shas of earlier fixes. */
+function matchInputs(norm) {
+  const pc = Array.isArray(norm.raw && norm.raw.prior_commits) ? norm.raw.prior_commits : [];
+  return { pageHosts: pageHosts(norm.comments), priorShas: pc.map((p) => p && p.commit_sha).filter(Boolean) };
+}
 
 const FINAL = new Set(['fixed', 'answered', 'proposed', 'needs_input', 'skipped']);
 const EXPORT_RE = /^prototype-feedback_.*\.zip$/;
@@ -69,7 +76,7 @@ export function listBatches(L) {
         const done = norm.comments.every((c) => (finalEntries.get(c.id) || []).some((e) => !reviewerActedAfter(c, e))
           || (norm.fullExport && embeddedDone(c)));
         list.push({ id, state: done ? 'done' : 'in_progress', source: 'unpacked', version: norm.version,
-                    exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, counts: counts(norm.comments) });
+                    exportedAt: norm.exportedAt, repoUrls: norm.repoUrls, ...matchInputs(norm), counts: counts(norm.comments) });
       } catch (e) {
         list.push({ id, state: 'error', source: 'unpacked', error: e.message });
       }
@@ -82,7 +89,7 @@ export function listBatches(L) {
       const id = idFor(norm, file);
       if (!validId(id)) throw new Error(`invalid batch id ${id}`);
       waiting.push({ id, state: 'waiting', source, version: norm.version, exportedAt: norm.exportedAt,
-                     repoUrls: norm.repoUrls, counts: counts(norm.comments), file });
+                     repoUrls: norm.repoUrls, ...matchInputs(norm), counts: counts(norm.comments), file });
     } catch (e) {
       list.push({ id: path.basename(file, '.zip'), state: 'error', source, error: e.message, file });
     }
