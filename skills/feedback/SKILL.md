@@ -13,14 +13,19 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 
 **Who to ask.** "The developer" is the user in this session. "The reviewer" is the person who pinned the comments. You reach the reviewer only through `status_set` with `status: "needs_input"` and one `question_back`. Never guess the branch, the repo, or a product decision.
 
-**No changes before the OK.** Do not edit, create or commit any file before the developer approves the plan in step 3. The only exception is `.pfb/brief.md` in step 0, written from the developer's answers.
+**No changes before the OK.** Do not edit, create or commit any file before the developer approves the plan in step 3. The only exceptions are `.pfb/brief.md` in step 0, written from the developer's answers, and the `git init` baseline of step 0.1 after the developer says yes.
 
 ## 0. Preconditions
-1. Run `git rev-parse --is-inside-work-tree`. If it fails, tell the user this command needs a git repo, and stop.
+1. Run `git rev-parse --is-inside-work-tree`. If it fails, the folder is not a git repo (for example a local HTML file that is published to a static host). Ask the developer once: "This folder is not a git repo. Run `git init` and commit the current files as a baseline, so each fix is its own commit? (yes/no)".
+   - **yes**: run `git init`, `git add -A` and `git commit -m "baseline before prototype feedback"`. Then continue with step 2 as usual.
+   - **no**: work in **plain-folder mode** for this whole run:
+     - Skip steps 2–4 below, step 4 (Branch), and every branch, commit and merge step. `<repo>` is the current folder (step 0.5 then runs no `git rev-parse`). The brief lives in `<repo>/.pfb/` as usual (step 0.6).
+     - Before you edit a file, copy it to `.pfb/before/<batch_id>/<relative path>`, once per file per batch. This is the only way back, so never skip it.
+     - Record a fix with `status_set` `status: "fixed"` without `commit_sha`. Start `notes` with "No git:" and name the backup folder.
 2. Run `git remote get-url origin`. If it fails, say that repo matching is not possible.
 3. Run `git status --porcelain -- . ':!.pfb'`. The `.pfb/` folder is ignored here, because the brief lives there. If it prints anything, ask the user to commit or stash first, and stop.
 4. Run `git symbolic-ref -q HEAD`. If it prints nothing, HEAD is detached. Tell the user before you create a branch.
-5. Run `git rev-parse --show-toplevel`. This is `<repo>`. Look for `<repo>/.pfb/brief.md`.
+5. Run `git rev-parse --show-toplevel`. This is `<repo>` (in plain-folder mode, `<repo>` is the current folder). Look for `<repo>/.pfb/brief.md`.
 6. If the brief is missing, offer to create it. If the developer agrees, ask one question at a time and offer a default from the repo for each:
    - `base_branch`: `git symbolic-ref --short refs/remotes/origin/HEAD` without `origin/`, else `main`.
    - `branch_policy`: `per_round` (default), `per_session` or `current_branch`.
@@ -28,7 +33,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    - `test_cmd`, `build_cmd`, `lint_cmd`: from `package.json` scripts (`npm test`, `npm run build`, `npm run lint`) or the CI files (`.github/workflows/`). Empty if none.
    - `preview_url_pattern` (for example `https://myapp-git-{branch}-acme.vercel.app`), `design_system`, `do_not_touch` (globs), `repo` (optional): empty unless the developer gives one.
    - `page_hosts`: do not ask. `repo_remember` fills it later (step 2.5).
-   - `page_files`: do not ask. `page_file_remember` fills it later.
+   - `page_files`: do not ask. `page_file_remember` fills it later (step 3.3).
    - Goals and constraints: prose for the body.
    Write the file in this format. Do not commit it yourself.
    ```
@@ -43,10 +48,11 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    design_system: ""
    do_not_touch: []
    page_hosts: []
+   page_files: []
    ---
    Goals and constraints in prose.
    ```
-   Right after you write the file, ask the developer to commit `.pfb/brief.md` or to add `.pfb/` to `.gitignore`. Do not do either yourself.
+   Right after you write the file, ask the developer to commit `.pfb/brief.md` or to add `.pfb/` to `.gitignore`. Do not do either yourself. In plain-folder mode there is nothing to commit; do not ask.
 7. If the developer declines, continue without a brief. Step 3 then checks the test command.
 
 ## 1. Pick a batch
@@ -67,13 +73,15 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 1. Call `batch_open` with the id and `repo_dir: "<repo>"`. It unpacks the batch to `<dir>` and archives the ZIP. If `brief_error` is set, show it and ask the developer to fix the brief. Stop.
 2. **Ask-when-missing gate.** Check each item. If one applies, ask the developer, one question at a time. Do not plan until they answer.
    1. The developer confirmed a repo mismatch in step 2.5, and you cannot find the comments' page routes or page titles in the code.
-   2. A `prior_commits` sha is missing, or its branch is unmerged and the brief has no `branch_policy`. Run the checks of step 4.1 now to find out.
+   2. A `prior_commits` sha is missing, or its branch is unmerged and the brief has no `branch_policy`. Run the checks of step 4.1 now to find out. Skip this item in plain-folder mode.
    3. There is no brief, or the brief has no `test_cmd`, and no obvious test script exists (`package.json` `test` script, `Makefile` test target, CI test step). Ask how to verify, or whether to work without tests.
    4. Step 2.4 asked about a split and has no answer yet.
    5. A comment needs a technical or architectural decision that the developer owns. Do not set a status for it yet.
 3. For each open comment (`done: false`), call `comment_get` and read the full comment:
    - `version_hints` (from `batch_open`) is keyed by page host: `{ "<host>": { commit?, branch?, source } }`. If the entry for the comment's host has a `commit` in this repo's history, run `git rev-list --count <commit>..HEAD` and say how far the code moved. Flag comments whose page maps to files in `git diff --name-only <commit>..HEAD`. If it has only a local `branch`, use `git rev-list --count <branch>..HEAD`. Otherwise say that no comparison is possible.
    - Read `screenshot_path` and `viewport_screenshot_path` (relative to `<dir>`) with the Read tool when present. They can be null. If `screenshot_error` is set, say the capture failed and use the other evidence.
+   - **Page → file.** If the comment's page is not a file you can find in `<repo>` (for example a page on a static host that is published from a local HTML file), look in the brief's `page_files`. If no entry matches the page URL, ask the developer: "Which local file is published at <page_url>?" Then call `page_file_remember` with `page_url`, the file relative to `<repo>`, and `repo_dir: "<repo>"`. If there is no brief, offer to create it first (step 0.6); `page_file_remember` needs one.
+   - `view` (when set) is the in-page view (tab) that was open: `view.label` names it, and clicking the `view.clicks` selectors in order opens it. For a region comment, `anchor.selector` is the element under the region.
    - Use `selector` and `element_snapshot` to find the element in the code. Also use `attachments[].path` (files inside `<dir>`) and the top-level `console_log` / `network_log` in `<dir>/feedback.json`.
    - Read `history` first. The newest note is the current instruction:
      - **do_it**: build the proposal in `response.proposal`.
@@ -84,6 +92,8 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
 5. Show the plan and the branch you intend to use (step 4). Wait for the developer's OK. Do not edit anything before that.
 
 ## 4. Branch
+In plain-folder mode, skip this step: there is no branch.
+
 1. For each distinct `commit_sha` in `prior_commits`:
    - Run `git cat-file -e <sha>^{commit}`. If it fails, the commit is **missing**. Ask the developer. Do not continue on a guess.
    - Run `git merge-base --is-ancestor <sha> <base_branch>`. Exit code 0 means **merged**. Take `<base_branch>` from the brief. Without a brief, use `git symbolic-ref refs/remotes/origin/HEAD`. If that fails too, ask the developer. Do not test against HEAD: HEAD can still be on the branch of the last round.
@@ -108,20 +118,24 @@ Before you start a comment, `status_set` with `status: "in_progress"`. Do not to
 3. **Ask the reviewer** (`status: "needs_input"` with a one-sentence `question_back`) only when the answer is a product, copy or visual preference that only the reviewer can give, or when the intent is still unclear after you read the text, screenshot, `element_snapshot` and `history`. Also ask when `screenshot_path` is null and the text is empty.
 4. **Ask the developer** in this session for a technical or architectural decision they own. Set no status until they answer.
 5. **For fix and change:**
-   1. Make the change.
+   1. Make the change. In plain-folder mode, first copy each file you edit to `.pfb/before/<batch_id>/<relative path>` (once per file per batch).
    2. Run the brief's `test_cmd`, and `build_cmd` if it is set (or the test command agreed in step 3.2). If one fails, fix the cause. If you cannot fix it, do not commit: `status_set` with `status: "needs_input"` or `"skipped"` and the failure in `summary`.
    3. If the change produces no diff, do not make an empty commit. `status_set` with `status: "skipped"` and the reason in `summary`.
    4. Stage only the files you changed for this comment (`git add -- <files>`). Make **one commit per comment** (message: `feedback: <short summary>`).
    5. If the commit fails (for example, a hook rejects it), do not record `fixed`. Tell the user the error and stop on that comment.
    6. Run `git rev-parse HEAD` to get `commit_sha`.
-   7. `status_set` with `status: "fixed"`, `commit_sha`, `summary` (≤120 chars), `files_changed`, and `notes` (≤500 chars): your rationale, or "no tests run" if there is no test command. If the brief has `preview_url_pattern`, replace `{branch}` with the branch name in lower case with every character that is not a-z or 0-9 changed to `-`. Pass the result as `verification_url`.
+   7. **Check it with a screenshot.** If the comment's page maps to a local HTML file (in `<repo>` or through `page_files`), call `page_shot` with `batch_id`, `comment_id` and `repo_dir: "<repo>"`. Read the PNG at the returned `path` with the Read tool, next to the reviewer's `screenshot_path`. Say in one line whether the fix shows. Pass the returned `after_shot` to `status_set` in the next step. If `page_shot` returns an error, show it and continue without it: the status still goes out, but do not claim that you checked the page.
+   8. `status_set` with `status: "fixed"`, `after_shot` (from step 7, when you have it), `commit_sha`, `summary` (≤120 chars), `files_changed`, and `notes` (≤500 chars): your rationale, or "no tests run" if there is no test command. If the brief has `preview_url_pattern`, replace `{branch}` with the branch name in lower case with every character that is not a-z or 0-9 changed to `-`. Pass the result as `verification_url`.
+
+   In plain-folder mode, skip sub-steps 4–6 (there is no commit): run the tests, then step 7, then `status_set` with `status: "fixed"`, no `commit_sha`, and `notes` that start with "No git:" and name `.pfb/before/<batch_id>/`.
 
 Call `status_set` right after each comment, not at the end, so status reaches the extension while you work. If `status_set` returns an error, show it and stop.
 
 ## 6. Report
-1. Summarise: per comment, its status and one line. List the branch name and commits.
-2. If the brief has `open_pr: true`, ask the developer whether to push the branch and open a PR. Do it only after a yes.
-3. Tell the developer how the reviewer gets the result:
+1. Summarise: per comment, its status and one line. List the branch name and commits. In plain-folder mode, list the changed files and the backup folder `.pfb/before/<batch_id>/` instead.
+2. If a fixed page is published from a local file (`page_files`), tell the developer to publish the changed file. Until then the reviewer's pins say "Fixed · not live yet".
+3. If the brief has `open_pr: true`, ask the developer whether to push the branch and open a PR. Do it only after a yes.
+4. Tell the developer how the reviewer gets the result:
    - If `round_note.reviewer_is_developer` is `false`, or the batch came from a manual export (`export_kind` is zip, html, drive or email, or `export_kind` is null and `inbox_list` showed source `export`): tell the developer to send `<dir>/responses.json` to the reviewer (name them if `reviewer` is set). The reviewer opens the extension popup → More → **Import status** and picks that file.
    - Otherwise (the batch came from **Send to Claude Code**, which only extension 0.7.0+ has): say that the reviewer's pins update on their own while a Claude Code session with this plugin is open. If no session is open, they update the next time one starts. Do not mention Import status.
-4. Do not merge the branch; merging is the user's call.
+5. Do not merge the branch; merging is the user's call.

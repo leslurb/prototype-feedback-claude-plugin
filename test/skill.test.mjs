@@ -98,3 +98,26 @@ test('step 6 picks the return path from reviewer_is_developer and export_kind', 
   assert.ok(!/0\.6\.0/.test(auto.split('\n')[0]), 'no 0.6.0 instructions on the automatic path');
   at('Do not mention Import status', s6);
 });
+
+test('a folder without git: offer git init once, else plain-folder mode with backups and no commits', () => {
+  const s0 = section(0);
+  for (const s of ['git init', 'git add -A', 'baseline before prototype feedback', 'plain-folder mode', '.pfb/before/', 'without `commit_sha`', '"No git:"']) at(s, s0);
+  assert.ok(at('git init', s0) < at('git remote get-url origin', s0), 'the git question is step 0.1, before the remote check');
+  at('In plain-folder mode, skip this step', section(4));
+  const s5 = section(5);
+  for (const s of ['.pfb/before/<batch_id>/', 'no `commit_sha`', 'No git:']) at(s, s5);
+});
+
+test('page -> file goes through page_files and page_file_remember before the plan', () => {
+  const s3 = section(3);
+  for (const s of ['page_files', '`page_file_remember`', 'Which local file is published at <page_url>?', 'view.clicks']) at(s, s3);
+});
+
+test('after a fix: page_shot, read the PNG next to the reviewer screenshot, pass after_shot; an error is said, not hidden', () => {
+  const s5 = section(5);
+  const shot = at('`page_shot`', s5);
+  for (const s of ['Read the PNG', 'screenshot_path', 'after_shot', 'do not claim that you checked']) at(s, s5);
+  assert.ok(shot < at('8. `status_set` with `status: "fixed"`, `after_shot`', s5), 'page_shot runs before the fixed status_set that carries after_shot');
+  assert.ok(at('git rev-parse HEAD', s5) < shot, 'after the commit');
+  at('Fixed · not live yet', section(6));
+});
