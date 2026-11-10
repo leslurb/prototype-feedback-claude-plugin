@@ -31,11 +31,15 @@ function handle(msg) {
     if (method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });
     if (method === 'tools/list') return send({ jsonrpc: '2.0', id, result: { tools: TOOLS } });
     if (method === 'tools/call') {
+      // page_shot answers with a promise (it waits for Chrome); the other tools answer at once.
+      const ok = (out) => send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] } });
+      const fail = (e) => send({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: e.message }] } });
       try {
         const out = callTool(L, params.name, params.arguments || {});
-        return send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] } });
+        if (out && typeof out.then === 'function') return void out.then(ok, fail);
+        return ok(out);
       } catch (e) {
-        return send({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: e.message }] } });
+        return fail(e);
       }
     }
     send({ jsonrpc: '2.0', id, error: { code: -32601, message: `method not found: ${method}` } });
