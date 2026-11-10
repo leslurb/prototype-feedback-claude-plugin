@@ -121,3 +121,9 @@ test('after a fix: page_shot, read the PNG next to the reviewer screenshot, pass
   assert.ok(at('git rev-parse HEAD', s5) < shot, 'after the commit');
   at('Fixed · not live yet', section(6));
 });
+
+test('page_shot gets `file` when the page is a repo file with no page_files entry', () => {
+  const s5 = section(5);
+  const shot = s5.slice(at('`page_shot`', s5), at('8. `status_set` with `status: "fixed"`', s5));
+  for (const s of ['`file`', 'relative to `<repo>`', 'page_files']) assert.ok(shot.includes(s), `page_shot step names ${s}`);
+});
