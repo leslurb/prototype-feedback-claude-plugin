@@ -41,7 +41,7 @@ export function findChrome(env = process.env, platform = process.platform, exist
 const scriptJson = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 /** The original HTML with one script before the last </body> (or appended): after load, click each selector
- *  in order with 300 ms between, then scroll the target to the centre and outline it. */
+ *  in order with 300 ms between, then shift the page (a transform, not a scroll) so the target is in the middle of the window, and outline it. */
 export function shotHtml(originalHtml, { clicks = [], target = null } = {}) {
   const script = '<script data-pfb-shot>(() => {'
     + ` const clicks = ${scriptJson(clicks || [])}; const target = ${scriptJson(target || null)};`
@@ -49,7 +49,14 @@ export function shotHtml(originalHtml, { clicks = [], target = null } = {}) {
     + ' const run = async () => {'
     + ' for (const s of clicks) { try { const el = document.querySelector(s); if (el) el.click(); } catch (_) { /* bad selector */ } await wait(300); }'
     + ' if (target) { try { const el = document.querySelector(target);'
-    + " if (el) { el.scrollIntoView({ block: 'center' }); el.style.outline = '3px solid #f97316'; el.style.outlineOffset = '2px'; } } catch (_) { /* bad selector */ } }"
+    // Bring the target to the middle of the window without scrolling: Chrome's --screenshot comes out
+    // blank after a scroll, so shift the page up with a transform instead.
+    + " if (el) { window.scrollTo(0, 0); const r0 = el.getBoundingClientRect();"
+    + ' const dy = Math.max(0, Math.round(r0.top - Math.max(0, (innerHeight - r0.height) / 2)));'
+    + " if (dy) { document.body.style.transform = 'translateY(' + (-dy) + 'px)'; }"
+    + " el.style.outline = '3px solid #f97316'; el.style.outlineOffset = '2px';"
+    + ' const r = el.getBoundingClientRect();'
+    + " document.documentElement.setAttribute('data-pfb-shot-rect', [r.left, r.top, r.width, r.height].map(Math.round).join(',')); } } catch (_) { /* bad selector */ } }"
     + ' };'
     + " if (document.readyState === 'complete') run(); else addEventListener('load', run);"
     + ' })();</script>';
@@ -60,11 +67,26 @@ export function shotHtml(originalHtml, { clicks = [], target = null } = {}) {
 
 function defaultRun(cmd, args) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: TIMEOUT_MS, windowsHide: true }, (err, _out, stderr) => {
+    execFile(cmd, args, { timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) reject(new Error(`${path.basename(cmd)} failed: ${err.killed ? `timed out after ${TIMEOUT_MS / 1000} s` : err.message}${stderr ? `\n${String(stderr).slice(0, 500)}` : ''}`));
-      else resolve();
+      else resolve(String(stdout || ''));
     });
   });
+}
+
+const WIDTH = 1280, HEIGHT = 900;
+
+/** The target's box in the screenshot, from the data-pfb-shot-rect attribute of a --dump-dom output,
+ *  clamped to the window. null when there is none. */
+export function boxFromDom(dom) {
+  const m = /data-pfb-shot-rect="(-?\d+),(-?\d+),(\d+),(\d+)"/.exec(String(dom || ''));
+  if (!m) return null;
+  let [x, y, w, h] = m.slice(1).map(Number);
+  if (x < 0) { w += x; x = 0; }
+  if (y < 0) { h += y; y = 0; }
+  w = Math.min(w, WIDTH - x);
+  h = Math.min(h, HEIGHT - y);
+  return w > 0 && h > 0 ? { x, y, w, h, width: WIDTH, height: HEIGHT } : null;
 }
 
 /** Screenshot `file` (1280x900) into `out` after restoring the view. Returns `out`.
@@ -77,17 +99,28 @@ export async function pageShot({ file, clicks = [], target = null, out, chrome =
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-chrome-'));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.rmSync(out, { force: true });
+  // <out>.json: where the target sits in the PNG; the listener sends it so the card can crop to it.
+  const boxFile = out.replace(/\.png$/i, '') + '.json';
+  fs.rmSync(boxFile, { force: true });
   try {
     fs.writeFileSync(copy, shotHtml(html, { clicks, target }));
-    await run(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--window-size=1280,900',
-      '--virtual-time-budget=4000', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-      `--screenshot=${out}`, pathToFileURL(copy).href]);
+    const common = ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--window-size=${WIDTH},${HEIGHT}`,
+      '--virtual-time-budget=4000', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check'];
+    await run(chrome, [...common, `--screenshot=${out}`, pathToFileURL(copy).href]);
+    let size = 0;
+    try { size = fs.statSync(out).size; } catch { /* not written */ }
+    if (!size) throw new Error(`Chrome wrote no screenshot to ${out}`);
+    // Same page, window and timers again, dumping the DOM to read the target's box. Optional: without
+    // it the card shows the whole page, so a failure here only loses the crop.
+    if (target) {
+      try {
+        const box = boxFromDom(await run(chrome, [...common, '--dump-dom', pathToFileURL(copy).href]));
+        if (box) fs.writeFileSync(boxFile, JSON.stringify(box));
+      } catch { /* no crop */ }
+    }
   } finally {
     try { fs.rmSync(copy, { force: true }); } catch { /* best effort */ }
     try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Chrome may still hold a file */ }
   }
-  let size = 0;
-  try { size = fs.statSync(out).size; } catch { /* not written */ }
-  if (!size) throw new Error(`Chrome wrote no screenshot to ${out}`);
   return out;
 }

@@ -147,6 +147,11 @@ test('GET /shot/<batch>/<comment> serves the after-shot PNG to the extension', a
     assert.equal(ok.headers.get('content-type'), 'image/png');
     assert.equal(ok.headers.get('access-control-allow-origin'), PUBLISHED_ORIGIN);
     assert.deepEqual(Buffer.from(await ok.arrayBuffer()), png);
+    assert.equal(ok.headers.get('x-pfb-box'), null, 'no box file: no header');
+    fs.writeFileSync(path.join(batches, 'b1', 'after', 'c1.json'), JSON.stringify({ x: 120, y: 340, w: 200, h: 48, width: 1280, height: 900 }));
+    const withBox = await fetch(`${base}/shot/b1/c1`, { headers: { Origin: PUBLISHED_ORIGIN } });
+    assert.equal(withBox.headers.get('x-pfb-box'), '120,340,200,48', 'box of the target in the screenshot');
+    assert.match(withBox.headers.get('access-control-expose-headers') || '', /X-PFB-Box/i, 'the extension may read it');
     assert.equal((await fetch(`${base}/shot/b1/c1`, { headers: { Origin: 'https://evil.example' } })).status, 403);
     assert.equal((await fetch(`${base}/shot/b1/c9`, { headers: { Origin: PUBLISHED_ORIGIN } })).status, 404, 'missing file');
     assert.equal((await fetch(`${base}/shot/b9/c1`, { headers: { Origin: PUBLISHED_ORIGIN } })).status, 404, 'missing batch');

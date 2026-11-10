@@ -45,7 +45,14 @@ export function startListener({ port = DEFAULT_PORT, statusFile, batchesDir = nu
           catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') throw e; }
         }
         if (!png) { res.writeHead(404, cors); res.end(); return; }
-        res.writeHead(200, { ...cors, 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+        // page_shot's box of the target in the PNG (x,y,w,h), so the extension can crop to it.
+        let box = null;
+        try {
+          const b = JSON.parse(fs.readFileSync(path.join(batchesDir, shot[1], 'after', `${shot[2]}.json`), 'utf8'));
+          if ([b.x, b.y, b.w, b.h].every((n) => Number.isInteger(n) && n >= 0)) box = `${b.x},${b.y},${b.w},${b.h}`;
+        } catch { /* no box: the card shows the whole page */ }
+        res.writeHead(200, { ...cors, 'Content-Type': 'image/png', 'Cache-Control': 'no-store',
+          ...(box ? { 'X-PFB-Box': box } : {}), ...(origin ? { 'Access-Control-Expose-Headers': 'X-PFB-Box' } : {}) });
         res.end(png);
         return;
       }

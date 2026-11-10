@@ -27,7 +27,7 @@ test('findChrome takes CHROME_PATH first, then the platform paths in order, else
   assert.throws(() => findChrome({ CHROME_PATH: '/missing' }, 'win32', () => false), /CHROME_PATH/);
 });
 
-test('shotHtml inserts one script before </body> that clicks, waits, scrolls and outlines; the rest is unchanged', () => {
+test('shotHtml inserts one script before </body> that clicks, waits, shifts the target into view and outlines; the rest is unchanged', () => {
   const html = '<html><body><p>a</p></body></html>';
   const clicks = ['#tab-b', '[data-x="</script>"]'];
   const out = shotHtml(html, { clicks, target: '#price' });
@@ -39,7 +39,7 @@ test('shotHtml inserts one script before </body> that clicks, waits, scrolls and
   assert.ok(script.includes(JSON.stringify(clicks).replace(/</g, '\\u003c')), 'JSON-encoded selectors, < escaped');
   assert.ok(!script.slice(1).includes('</'), 'nothing can close the script early');
   assert.ok(script.includes(JSON.stringify('#price')));
-  for (const s of ['.click()', '300', 'scrollIntoView', "block: 'center'", '3px solid #f97316']) assert.ok(script.includes(s), s);
+  for (const s of ['.click()', '300', 'translateY', 'window.scrollTo(0, 0)', '3px solid #f97316']) assert.ok(script.includes(s), s);
   const noBody = shotHtml('<p>x</p>', { clicks: [], target: null });
   assert.ok(noBody.startsWith('<p>x</p><script data-pfb-shot>'), 'appended when there is no </body>');
   assert.ok(noBody.includes('null'), 'no target');
@@ -61,11 +61,15 @@ test('pageShot runs headless Chrome on a copy next to the file, then deletes the
     const url = args[args.length - 1];
     copySeen = fileURLToPath(url);
     assert.ok(fs.readFileSync(copySeen, 'utf8').includes('"#tab-b"'), 'copy holds the click script');
+    if (args.includes('--dump-dom')) return '<html data-pfb-shot-rect="120,340,200,48"><body></body></html>';
     fs.writeFileSync(args.find((a) => a.startsWith('--screenshot=')).slice('--screenshot='.length), PNG_SIG);
+    return '';
   };
   const r = await pageShot({ file: path.join(dir, 'proto.html'), clicks: ['#tab-b'], target: '#p', out, chrome: '/c/chrome', run });
   assert.equal(r, out);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2, 'screenshot, then a --dump-dom run that reads where the target sits');
+  assert.ok(calls[1].args.includes('--dump-dom') && !calls[1].args.some((a) => a.startsWith('--screenshot')), 'second run dumps the DOM');
+  assert.deepEqual(JSON.parse(fs.readFileSync(out.replace(/\.png$/, '.json'), 'utf8')), { x: 120, y: 340, w: 200, h: 48, width: 1280, height: 900 }, 'target box saved next to the PNG');
   assert.equal(calls[0].cmd, '/c/chrome');
   for (const a of ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--window-size=1280,900', '--virtual-time-budget=4000', `--screenshot=${out}`]) {
     assert.ok(calls[0].args.includes(a), a);
@@ -76,6 +80,25 @@ test('pageShot runs headless Chrome on a copy next to the file, then deletes the
   assert.equal(fs.existsSync(copySeen), false, 'copy deleted');
   assert.deepEqual(fs.readdirSync(dir), ['proto.html']);
   assert.deepEqual(fs.readFileSync(out), PNG_SIG);
+});
+
+test('pageShot keeps the screenshot when the box cannot be read, and drops a stale box', async () => {
+  const dir = folder();
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-pso-')), 'after', 'c1.png');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out.replace(/\.png$/, '.json'), '{"x":1,"y":1,"w":1,"h":1}');
+  const run = async (cmd, args) => {
+    if (args.includes('--dump-dom')) throw new Error('dump failed');
+    fs.writeFileSync(args.find((a) => a.startsWith('--screenshot=')).slice('--screenshot='.length), PNG_SIG);
+    return '';
+  };
+  assert.equal(await pageShot({ file: path.join(dir, 'proto.html'), clicks: [], target: '#p', out, chrome: 'x', run }), out);
+  assert.equal(fs.existsSync(out.replace(/\.png$/, '.json')), false, 'no box rather than a stale one');
+});
+
+test('shotHtml records the target box on the root element for the --dump-dom run', () => {
+  const html = shotHtml('<html><body><p id="p">x</p></body></html>', { clicks: [], target: '#p' });
+  assert.match(html, /data-pfb-shot-rect/);
 });
 
 test('pageShot throws when Chrome wrote no screenshot or failed, and still deletes the copy', async () => {
@@ -104,6 +127,46 @@ test('pageShot with real headless Chrome screenshots the second tab of a 2-tab p
   assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith('.pfb-shot-')), [], 'copy deleted');
 });
 
+// Minimal PNG reader (8-bit RGB/RGBA, non-interlaced, as Chrome writes): pixel(x, y) -> [r, g, b].
+async function readPng(file) {
+  const zlib = await import('node:zlib');
+  const b = fs.readFileSync(file);
+  let o = 8, w = 0, h = 0, ct = 0;
+  const idat = [];
+  while (o < b.length) {
+    const len = b.readUInt32BE(o), type = b.toString('latin1', o + 4, o + 8), data = b.subarray(o + 8, o + 8 + len);
+    if (type === 'IHDR') { w = data.readUInt32BE(0); h = data.readUInt32BE(4); ct = data[9]; }
+    if (type === 'IDAT') idat.push(data);
+    o += 12 + len;
+  }
+  const bpp = ct === 6 ? 4 : 3, stride = w * bpp, raw = zlib.inflateSync(Buffer.concat(idat)), px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? px[y * stride + x - bpp] : 0, up = y ? px[(y - 1) * stride + x] : 0, c = x >= bpp && y ? px[(y - 1) * stride + x - bpp] : 0;
+      const p = a + up - c, pa = Math.abs(p - a), pb = Math.abs(p - up), pc = Math.abs(p - c);
+      const pred = [0, a, up, (a + up) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? up : c][f];
+      px[y * stride + x] = (row[x] + pred) & 255;
+    }
+  }
+  return { w, h, pixel: (x, y) => [...px.subarray(y * stride + x * bpp, y * stride + x * bpp + 3)] };
+}
+
+test('pageShot with real headless Chrome shows a target far below the fold, and its box points at it', { skip: chrome ? false : 'no Chrome or Edge found (set CHROME_PATH)', timeout: 60000 }, async () => {
+  // E2E 2026-11-09: after scrollIntoView, Chrome's --screenshot wrote an all-white PNG.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-psr-'));
+  fs.writeFileSync(path.join(dir, 'tall.html'), `<!doctype html><html><body style="margin:0;background:#fff">
+<div style="height:2400px"></div><div id="target" style="margin-left:300px;width:240px;height:120px;background:#ff0000"></div><div style="height:2000px"></div>
+</body></html>`);
+  const out = path.join(dir, 'after', 'c1.png');
+  await pageShot({ file: path.join(dir, 'tall.html'), clicks: [], target: '#target', out, chrome });
+  const box = JSON.parse(fs.readFileSync(out.replace(/\.png$/, '.json'), 'utf8'));
+  const img = await readPng(out);
+  assert.equal(img.w, 1280);
+  const [r, g, bl] = img.pixel(box.x + Math.floor(box.w / 2), box.y + Math.floor(box.h / 2));
+  assert.ok(r > 200 && g < 60 && bl < 60, `centre of the box is the red target, got ${[r, g, bl]} at box ${JSON.stringify(box)}`);
+});
+
 function openBatchFixture(comment) {
   const L = layout(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-pst-')));
   fs.mkdirSync(L.inbox, { recursive: true });
@@ -111,7 +174,9 @@ function openBatchFixture(comment) {
   fs.writeFileSync(path.join(L.inbox, 's.zip'), makeZip({ 'feedback.json': JSON.stringify(json) }));
   return L;
 }
+// Records the screenshot runs only; the --dump-dom run (target box) returns a DOM without a box.
 const fakeRun = (seen) => async (cmd, args) => {
+  if (args.includes('--dump-dom')) return '<html></html>';
   seen.push({ args, html: fs.readFileSync(fileURLToPath(args[args.length - 1]), 'utf8') });
   fs.writeFileSync(args.find((a) => a.startsWith('--screenshot=')).slice('--screenshot='.length), PNG_SIG);
 };
