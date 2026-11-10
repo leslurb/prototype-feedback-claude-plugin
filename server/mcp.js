@@ -13,7 +13,7 @@ const log = (m) => process.stderr.write(`${m}\n`);
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
 
 const port = process.env.PFB_PORT !== undefined ? Number(process.env.PFB_PORT) : DEFAULT_PORT;
-startListener({ port, statusFile: L.statusFile, log })
+startListener({ port, statusFile: L.statusFile, batchesDir: L.batches, log })
   .then((srv) => log(srv ? `pfb: status listener on 127.0.0.1:${srv.address().port}` : `pfb: port ${port} in use; another session serves status`))
   .catch((e) => log(`pfb: status listener failed: ${e.message}`));
 

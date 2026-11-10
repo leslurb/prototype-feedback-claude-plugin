@@ -118,3 +118,27 @@ test('embeddedDone honours a final embedded state unless a reopen-type history e
   }
   assert.equal(embeddedDone({ status: { state: 'fixed', at }, history: [{ kind: 'confirm', at: later }] }), true);
 });
+
+test('after_shot is stored, reaches responses.json and the listener doc, and must name after/<id>.png', () => {
+  const f = tmp();
+  setStatus(f, { batchId: 'b1', version: 6, commentId: 'c1', status: 'fixed', after_shot: 'after/c1.png' }, () => '2026-11-09T16:00:00Z');
+  const s = readStatus(f);
+  assert.equal(s.batches.b1.comments.c1.after_shot, 'after/c1.png');
+  assert.equal(responsesDoc(s, 'b1').responses[0].after_shot, 'after/c1.png');
+  assert.equal(responsesDoc(s, null).responses[0].after_shot, 'after/c1.png');
+  for (const bad of ['../x.png', 'after/../c1.png', '/abs/c1.png', 'after/c1.jpg', 'c1.png', 5]) {
+    assert.throws(() => setStatus(f, { batchId: 'b1', version: 6, commentId: 'c2', status: 'fixed', after_shot: bad }), /after_shot/, String(bad));
+  }
+  assert.equal(readStatus(f).batches.b1.comments.c2, undefined, 'nothing written on a refusal');
+});
+
+test('the status_set schema pattern for after_shot equals the server check', async () => {
+  const { TOOLS } = await import('../server/tools.js');
+  const { AFTER_SHOT_RE } = await import('../server/status.js');
+  const pattern = TOOLS.find((t) => t.name === 'status_set').inputSchema.properties.after_shot.pattern;
+  assert.equal(pattern, AFTER_SHOT_RE.source.split('\\/').join('/'));
+  const re = new RegExp(pattern);
+  assert.ok(re.test('after/c_1.png'));
+  assert.ok(!re.test('after/c1xpng'), 'the dot before png is literal');
+  assert.ok(!re.test('after/c1.pngx'));
+});

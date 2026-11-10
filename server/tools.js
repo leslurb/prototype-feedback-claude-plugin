@@ -34,6 +34,7 @@ export const TOOLS = [
       files_changed: { type: 'array', items: { type: 'string' } },
       verification_url: { type: 'string', description: 'Preview URL of the fixed build (from the brief preview_url_pattern).' },
       notes: { type: 'string', maxLength: 500, description: 'Rationale for the developer and reviewer (at most 500 chars).' },
+      after_shot: { type: 'string', pattern: '^after/[A-Za-z0-9][\\w.-]*\\.png$', description: 'The after_shot returned by page_shot (after/<comment_id>.png).' },
       proposal: { type: 'object', properties: { approach: { type: 'string' }, effort: { type: 'string', enum: ['S', 'M', 'L'] }, risk: { type: 'string' } } } } } },
 ];
 

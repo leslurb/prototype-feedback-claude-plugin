@@ -1,12 +1,17 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { readStatus, responsesDoc } from './status.js';
 
 export const PUBLISHED_ORIGIN = 'chrome-extension://lkpciiloidfgdhlgaefcbggajlfljmbp';
 export const DEFAULT_PORT = 41837;
 
+const SHOT_RE = /^\/shot\/([A-Za-z0-9][\w.-]*)\/([A-Za-z0-9][\w.-]*)$/;
+
 /** Read-only status listener on 127.0.0.1. Resolves to the server, or null if the port is taken
- *  (another Claude session already serves the same shared status file). */
-export function startListener({ port = DEFAULT_PORT, statusFile, extraOrigins = process.env.PFB_EXTRA_ORIGINS, log = () => {} }) {
+ *  (another Claude session already serves the same shared status file).
+ *  GET /shot/<batch>/<comment> serves <batchesDir>/<batch>/after/<comment>.png (page_shot's after-shot). */
+export function startListener({ port = DEFAULT_PORT, statusFile, batchesDir = null, extraOrigins = process.env.PFB_EXTRA_ORIGINS, log = () => {} }) {
   const allowed = new Set([PUBLISHED_ORIGIN, ...String(extraOrigins || '').split(',').map((s) => s.trim()).filter(Boolean)]);
   const srv = http.createServer((req, res) => {
     // Only 127.0.0.1 / localhost by name: a DNS-rebinding page arrives with its own host name.
@@ -31,6 +36,19 @@ export function startListener({ port = DEFAULT_PORT, statusFile, extraOrigins = 
       let url;
       try { url = new URL(req.url, 'http://127.0.0.1'); }
       catch { res.writeHead(400, cors); res.end(); return; }
+      const shot = SHOT_RE.exec(url.pathname);
+      if (shot) {
+        // The ids cannot hold a path separator or start with a dot, so the file stays inside batchesDir.
+        let png = null;
+        if (batchesDir) {
+          try { png = fs.readFileSync(path.join(batchesDir, shot[1], 'after', `${shot[2]}.png`)); }
+          catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') throw e; }
+        }
+        if (!png) { res.writeHead(404, cors); res.end(); return; }
+        res.writeHead(200, { ...cors, 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+        res.end(png);
+        return;
+      }
       if (url.pathname === '/health') body = { ok: true, pid: process.pid };
       else if (url.pathname === '/status') body = responsesDoc(readStatus(statusFile), null);
       else { res.writeHead(404, cors); res.end(); return; }

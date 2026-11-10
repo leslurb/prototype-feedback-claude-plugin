@@ -116,3 +116,58 @@ test('an unknown extension gets a readable 403, a web page does not', async () =
     assert.equal(page.headers['access-control-allow-origin'], undefined, 'a web page cannot even read the refusal');
   } finally { srv.close(); }
 });
+
+function shotFixture() {
+  const batches = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-shot-')), 'batches');
+  fs.mkdirSync(path.join(batches, 'b1', 'after'), { recursive: true });
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  fs.writeFileSync(path.join(batches, 'b1', 'after', 'c1.png'), png);
+  fs.writeFileSync(path.join(batches, 'secret.png'), png);
+  return { batches, png };
+}
+const rawPath = async (port, p, headers) => {
+  const http = await import('node:http');
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, headers, timeout: 2000 }, (res) => {
+      const chunks = []; res.on('data', (d) => chunks.push(d)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('request hung')); });
+    req.on('error', reject);
+    req.end();
+  });
+};
+
+test('GET /shot/<batch>/<comment> serves the after-shot PNG to the extension', async () => {
+  const { batches, png } = shotFixture();
+  const srv = await startListener({ port: 0, statusFile: statusFile(), batchesDir: batches });
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const ok = await fetch(`${base}/shot/b1/c1`, { headers: { Origin: PUBLISHED_ORIGIN } });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get('content-type'), 'image/png');
+    assert.equal(ok.headers.get('access-control-allow-origin'), PUBLISHED_ORIGIN);
+    assert.deepEqual(Buffer.from(await ok.arrayBuffer()), png);
+    assert.equal((await fetch(`${base}/shot/b1/c1`, { headers: { Origin: 'https://evil.example' } })).status, 403);
+    assert.equal((await fetch(`${base}/shot/b1/c9`, { headers: { Origin: PUBLISHED_ORIGIN } })).status, 404, 'missing file');
+    assert.equal((await fetch(`${base}/shot/b9/c1`, { headers: { Origin: PUBLISHED_ORIGIN } })).status, 404, 'missing batch');
+  } finally { srv.close(); }
+});
+
+test('/shot ids with .. or extra segments never reach the file system', async () => {
+  const { batches } = shotFixture();
+  const srv = await startListener({ port: 0, statusFile: statusFile(), batchesDir: batches });
+  const port = srv.address().port;
+  try {
+    for (const p of ['/shot/../secret', '/shot/b1/..%2F..%2Fsecret', '/shot/%2E%2E/secret', '/shot/b1/after/c1', '/shot/.x/c1', '/shot/b1/c1.png']) {
+      const r = await rawPath(port, p, { Origin: PUBLISHED_ORIGIN });
+      assert.equal(r.status, 404, p);
+    }
+  } finally { srv.close(); }
+});
+
+test('/shot without a batches folder answers 404', async () => {
+  const srv = await startListener({ port: 0, statusFile: statusFile() });
+  try {
+    assert.equal((await fetch(`http://127.0.0.1:${srv.address().port}/shot/b1/c1`, { headers: { Origin: PUBLISHED_ORIGIN } })).status, 404);
+  } finally { srv.close(); }
+});
