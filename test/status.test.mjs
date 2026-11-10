@@ -130,6 +130,9 @@ test('after_shot is stored, reaches responses.json and the listener doc, and mus
     assert.throws(() => setStatus(f, { batchId: 'b1', version: 6, commentId: 'c2', status: 'fixed', after_shot: bad }), /after_shot/, String(bad));
   }
   assert.equal(readStatus(f).batches.b1.comments.c2, undefined, 'nothing written on a refusal');
+  // The listener serves /shot/<batch>/<comment_id>, so a shot named for another comment would show a broken row.
+  assert.throws(() => setStatus(f, { batchId: 'b1', version: 6, commentId: 'c2', status: 'fixed', after_shot: 'after/c1.png' }), /after_shot must be after\/c2\.png/);
+  assert.equal(readStatus(f).batches.b1.comments.c2, undefined, 'nothing written on a mismatched name');
 });
 
 test('the status_set schema pattern for after_shot equals the server check', async () => {

@@ -70,6 +70,7 @@ export function setStatus(file, { batchId, version, exportId = null, commentId, 
   if (rest.notes != null && (typeof rest.notes !== 'string' || rest.notes.length > NOTES_MAX)) throw new Error(`notes must be a string of at most ${NOTES_MAX} chars`);
   if (rest.verification_url != null && !/^https?:\/\/\S+$/i.test(String(rest.verification_url))) throw new Error('verification_url must be an http(s) URL');
   if (rest.after_shot != null && (typeof rest.after_shot !== 'string' || !AFTER_SHOT_RE.test(rest.after_shot) || rest.after_shot.includes('..'))) throw new Error('after_shot must be after/<comment_id>.png (from page_shot)');
+  if (rest.after_shot != null && rest.after_shot !== `after/${commentId}.png`) throw new Error(`after_shot must be after/${commentId}.png (from page_shot for this comment)`); // the listener serves it by comment id
   const fd = acquireLock(file, waitMs);
   try {
     const s = readStatus(file);

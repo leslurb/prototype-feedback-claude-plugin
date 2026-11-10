@@ -29,6 +29,16 @@ test('status_set rejects a comment id that is not in the batch', () => {
   }
   assert.deepEqual(readStatus(L.statusFile), { version: 1, batches: {} });
 });
+test('status_set refuses an after_shot whose PNG is not in the batch folder', () => {
+  const L = fixture({ s: v6('e1', ['c1']) });
+  callTool(L, 'batch_open', { id: 'e1' });
+  assert.throws(() => callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', after_shot: 'after/c1.png' }), /after\/c1\.png does not exist/);
+  assert.deepEqual(readStatus(L.statusFile), { version: 1, batches: {} }, 'nothing written');
+  fs.mkdirSync(path.join(L.batches, 'e1', 'after'), { recursive: true });
+  fs.writeFileSync(path.join(L.batches, 'e1', 'after', 'c1.png'), 'png');
+  const r = callTool(L, 'status_set', { batch_id: 'e1', comment_id: 'c1', status: 'fixed', after_shot: 'after/c1.png' });
+  assert.equal(r.entry.after_shot, 'after/c1.png');
+});
 test('status follows the comment across re-exports', () => {
   const L = fixture({ a: v5(['k1']) });
   callTool(L, 'batch_open', { id: 'a' });

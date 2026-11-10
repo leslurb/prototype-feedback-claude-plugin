@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listBatches, openBatch, previewBatch } from './inbox.js';
-import { readStatus, setStatus, responsesDoc, latestByComment, writeAtomic, reviewerActedAfter, embeddedDone, ALLOWED } from './status.js';
+import { readStatus, setStatus, responsesDoc, latestByComment, writeAtomic, reviewerActedAfter, embeddedDone, ALLOWED, AFTER_SHOT_RE } from './status.js';
 import { readBrief, addBriefHosts, addBriefPageFile, pageFileFor } from './brief.js';
 import { pageShot, findChrome } from './page-shot.js';
 import { repoMatch, pageHosts, pageUrls, originUrl, makeCommitCheck } from './repo-match.js';
@@ -191,6 +191,9 @@ export function callTool(L, name, args = {}, deps = {}) {
     const { batch_id, comment_id, status, ...rest } = args;
     const known = !PROTO_KEYS.has(comment_id) && Array.isArray(feedback.comments) && feedback.comments.some((c) => c.id === comment_id);
     if (!known) throw new Error(`unknown comment ${comment_id} in batch ${batch_id}`);
+    if (typeof rest.after_shot === 'string' && AFTER_SHOT_RE.test(rest.after_shot) && !fs.existsSync(path.join(dir, rest.after_shot))) {
+      throw new Error(`${rest.after_shot} does not exist in batch ${batch_id}; pass the after_shot that page_shot returned, or none`);
+    }
     const entry = setStatus(L.statusFile, { batchId: batch_id, version, commentId: comment_id, exportId: feedback.export_id || null, status, ...rest }, undefined, {
       onWrite: (state) => writeAtomic(path.join(dir, 'responses.json'), responsesDoc(state, batch_id)), // under the status lock
     });
