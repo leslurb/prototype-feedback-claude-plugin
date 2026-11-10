@@ -108,10 +108,10 @@ export function repoRoot(startDir) {
 }
 
 /** Parsed `.pfb/brief.md` of the repo that holds startDir: { path, ...fields, body }, or null when there is none.
+ *  Outside a git repo (plain-folder mode) the brief is `<startDir>/.pfb/brief.md`.
  *  A malformed brief throws (with its path); it is never treated as missing. */
 export function readBrief(startDir = process.cwd()) {
-  const root = repoRoot(startDir);
-  if (!root) return null;
+  const root = repoRoot(startDir) || path.resolve(startDir);
   const file = path.join(root, '.pfb', 'brief.md');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); }
@@ -122,37 +122,94 @@ export function readBrief(startDir = process.cwd()) {
   } catch (e) { throw new Error(`${file}: ${e.message}`); }
 }
 
+/** Rewrite one list key of the brief's front matter, as one flow list, just before the closing `---`;
+ *  the rest of the file is kept byte for byte. */
+function writeBriefList(brief, key, list) {
+  const text = fs.readFileSync(brief.path, 'utf8');
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const flow = `${key}: [${list.map((v) => JSON.stringify(v)).join(', ')}]`;
+  const keyRe = new RegExp(`^${key}:`);
+  const end = lines.indexOf('---', 1);
+  let out;
+  if (lines[0] !== '---' || end < 0) {
+    out = ['---', flow, '---', ...lines];
+  } else {
+    const keep = [];
+    let inList = false;
+    for (let i = 1; i < end; i += 1) {
+      const l = lines[i];
+      if (keyRe.test(l)) { inList = true; continue; }
+      if (inList && /^\s+-/.test(l)) continue;
+      inList = false;
+      keep.push(l);
+    }
+    out = ['---', ...keep, flow, ...lines.slice(end)];
+  }
+  const tmp = `${brief.path}.tmp`;
+  fs.writeFileSync(tmp, out.join(eol));
+  fs.renameSync(tmp, brief.path);
+}
+
 /** Add hosts to the brief's `page_hosts` (handoff: remember a confirmed repo match).
  *  Rewrites only that key, as one flow list, just before the closing `---`; the rest of the file is kept byte for byte.
  *  Throws when there is no brief (the developer creates it first) or it is malformed. Returns { path, page_hosts, added }. */
 export function addBriefHosts(startDir, hosts) {
   const brief = readBrief(startDir);
   if (!brief) throw new Error('no .pfb/brief.md in this repo; create the brief first');
-  const text = fs.readFileSync(brief.path, 'utf8');
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const lines = text.split(/\r?\n/);
   const old = Array.isArray(brief.page_hosts) ? brief.page_hosts : [];
   const merged = [...new Set([...old, ...hosts.map((h) => String(h).toLowerCase())])].sort();
   const added = merged.filter((h) => !old.includes(h));
   if (!added.length) return { path: brief.path, page_hosts: merged, added };
-  let end = lines.indexOf('---', 1);
-  let out;
-  if (lines[0] !== '---' || end < 0) {
-    out = ['---', `page_hosts: ${JSON.stringify(merged).replace(/,/g, ', ')}`, '---', ...lines];
-  } else {
-    const keep = [];
-    let inList = false;
-    for (let i = 1; i < end; i += 1) {
-      const l = lines[i];
-      if (/^page_hosts:/.test(l)) { inList = true; continue; }
-      if (inList && /^\s+-/.test(l)) continue;
-      inList = false;
-      keep.push(l);
-    }
-    out = ['---', ...keep, `page_hosts: ${JSON.stringify(merged).replace(/,/g, ', ')}`, ...lines.slice(end)];
-  }
-  const tmp = `${brief.path}.tmp`;
-  fs.writeFileSync(tmp, out.join(eol));
-  fs.renameSync(tmp, brief.path);
+  writeBriefList(brief, 'page_hosts', merged);
   return { path: brief.path, page_hosts: merged, added };
+}
+
+/** A page URL without query and hash (the key of `page_files`), or null when it is not a URL. */
+export function pageKey(url) {
+  try {
+    const u = new URL(String(url));
+    u.search = ''; u.hash = '';
+    return u.href;
+  } catch { return null; }
+}
+
+/** `page_files` entries `"<url> -> <file>"` as [url, file] pairs; malformed entries are skipped. */
+function pageFilePairs(brief) {
+  const list = brief && Array.isArray(brief.page_files) ? brief.page_files : [];
+  return list.map((e) => {
+    const i = String(e).indexOf(' -> ');
+    return i > 0 ? [pageKey(e.slice(0, i).trim()), e.slice(i + 4).trim()] : null;
+  }).filter((p) => p && p[0] && p[1]);
+}
+
+/** The local file (relative to the repo dir) that the brief maps to this page URL, or null. */
+export function pageFileFor(brief, pageUrl) {
+  const key = pageKey(pageUrl);
+  if (!key) return null;
+  const hit = pageFilePairs(brief).find(([u]) => u === key);
+  return hit ? hit[1] : null;
+}
+
+/** Remember that `file` (relative to the brief's folder) is the local source of the published page `pageUrl`.
+ *  One file per page: a new file replaces the old mapping. The file must exist inside the folder.
+ *  Throws when there is no brief or it is malformed. Returns { path, page_files, added }. */
+export function addBriefPageFile(startDir, pageUrl, file) {
+  const brief = readBrief(startDir);
+  if (!brief) throw new Error('no .pfb/brief.md in this folder; create the brief first');
+  const key = pageKey(pageUrl);
+  if (!key || !/^https?:$/.test(new URL(key).protocol)) throw new Error(`page_url must be an http(s) URL (got ${pageUrl})`);
+  const root = path.dirname(path.dirname(brief.path));
+  const abs = path.resolve(root, String(file || ''));
+  const rel = path.relative(root, abs);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`${file} is outside ${root}`);
+  let st;
+  try { st = fs.statSync(abs); } catch { throw new Error(`${abs} does not exist`); }
+  if (!st.isFile()) throw new Error(`${abs} is not a file`);
+  const entry = `${key} -> ${rel.split(path.sep).join('/')}`;
+  const old = Array.isArray(brief.page_files) ? brief.page_files : [];
+  if (old.includes(entry)) return { path: brief.path, page_files: old, added: [] };
+  const merged = [...old.filter((e) => { const i = String(e).indexOf(' -> '); return !(i > 0 && pageKey(e.slice(0, i).trim()) === key); }), entry];
+  writeBriefList(brief, 'page_files', merged);
+  return { path: brief.path, page_files: merged, added: [entry] };
 }

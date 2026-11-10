@@ -3,18 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listBatches, openBatch, previewBatch } from './inbox.js';
 import { readStatus, setStatus, responsesDoc, latestByComment, writeAtomic, reviewerActedAfter, embeddedDone, ALLOWED } from './status.js';
-import { readBrief, addBriefHosts } from './brief.js';
-import { repoMatch, pageHosts, originUrl, makeCommitCheck } from './repo-match.js';
+import { readBrief, addBriefHosts, addBriefPageFile } from './brief.js';
+import { repoMatch, pageHosts, pageUrls, originUrl, makeCommitCheck } from './repo-match.js';
 
 const REPO_DIR = { type: 'string', description: 'Folder of the repo to match against (and whose .pfb/brief.md to read). Default: the server working directory.' };
 
 export const TOOLS = [
-  { name: 'inbox_list', description: 'List Prototype Feedback batches: waiting (inbox + 0.6.0 exports in Downloads), in progress and done, newest first. Each readable batch has repo_match {match, by: remote|prior_commit|page_hosts|null} for the repo in repo_dir.',
+  { name: 'inbox_list', description: 'List Prototype Feedback batches: waiting (inbox + 0.6.0 exports in Downloads), in progress and done, newest first. Each readable batch has repo_match {match, by: remote|prior_commit|page_hosts|page_files|null} for the repo in repo_dir.',
     inputSchema: { type: 'object', properties: { repo_dir: REPO_DIR } } },
   { name: 'batch_preview', description: 'Read a batch without unpacking or archiving it. Returns the compact index: round_note, repo, session, prior_commits, export_kind, page_hosts, repo_match, counts and one line per comment (id, verb, urgent, page_url, text cut to 200 chars, history_kinds, state, done).',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, repo_dir: REPO_DIR }, required: ['id'] } },
   { name: 'repo_remember', description: 'After the developer confirms that a batch belongs to this repo, add its page hosts to page_hosts in .pfb/brief.md so later batches from those pages match without asking. Needs an existing brief.',
     inputSchema: { type: 'object', properties: { batch_id: { type: 'string' }, repo_dir: REPO_DIR }, required: ['batch_id'] } },
+  { name: 'page_file_remember', description: 'Remember which local file (relative to repo_dir) is published at a page URL: adds "<page url without query/hash> -> <file>" to page_files in .pfb/brief.md. One file per page. The file must exist inside repo_dir. Needs an existing brief.',
+    inputSchema: { type: 'object', properties: { page_url: { type: 'string' }, file: { type: 'string', description: 'Path relative to repo_dir.' }, repo_dir: REPO_DIR }, required: ['page_url', 'file'] } },
   { name: 'batch_open', description: 'Unpack a batch (archives its ZIP). Returns the compact index plus dir, brief (parsed .pfb/brief.md of the repo, or null), brief_error and the cross-batch status map. Use comment_get for a full comment.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' },
       repo_dir: { type: 'string', description: 'Folder of the repo whose .pfb/brief.md to read. Default: the server working directory.' } }, required: ['id'] } },
@@ -80,9 +82,14 @@ function compactIndex(b, status) {
 function matcherFor(dir) {
   const remote = originUrl(dir);
   let briefHosts = [];
-  try { const b = readBrief(dir); if (b && Array.isArray(b.page_hosts)) briefHosts = b.page_hosts; } catch { /* brief_error is reported by batch_open */ }
+  let briefPageFiles = [];
+  try {
+    const b = readBrief(dir);
+    if (b && Array.isArray(b.page_hosts)) briefHosts = b.page_hosts;
+    if (b && Array.isArray(b.page_files)) briefPageFiles = b.page_files;
+  } catch { /* brief_error is reported by batch_open */ }
   const hasCommit = makeCommitCheck(dir);
-  return ({ repoUrls, priorShas, hosts }) => repoMatch({ remote, repoUrls, priorShas, hosts, briefHosts, hasCommit });
+  return ({ repoUrls, priorShas, hosts, urls }) => repoMatch({ remote, repoUrls, priorShas, hosts, briefHosts, urls, briefPageFiles, hasCommit });
 }
 
 function briefFor(dir) {
@@ -94,7 +101,7 @@ export function callTool(L, name, args = {}) {
   if (name === 'inbox_list') {
     const match = matcherFor(args.repo_dir || process.cwd());
     const batches = listBatches(L).map((b) => (b.state === 'error' ? b
-      : { ...b, repo_match: match({ repoUrls: b.repoUrls || [], priorShas: b.priorShas || [], hosts: b.pageHosts || [] }) }));
+      : { ...b, repo_match: match({ repoUrls: b.repoUrls || [], priorShas: b.priorShas || [], hosts: b.pageHosts || [], urls: b.pageUrls || [] }) }));
     return { root: L.root, batches };
   }
   if (name === 'batch_preview') {
@@ -103,7 +110,7 @@ export function callTool(L, name, args = {}) {
     const idx = compactIndex(b, statusMap(L, b.comments));
     const hosts = pageHosts(b.comments);
     const repo_match = matcherFor(args.repo_dir || process.cwd())({
-      repoUrls: b.repoUrls || [], priorShas: idx.prior_commits.map((p) => p && p.commit_sha).filter(Boolean), hosts });
+      repoUrls: b.repoUrls || [], priorShas: idx.prior_commits.map((p) => p && p.commit_sha).filter(Boolean), hosts, urls: pageUrls(b.comments) });
     return { ...idx, page_hosts: hosts, repo_match };
   }
   if (name === 'repo_remember') {
@@ -112,6 +119,14 @@ export function callTool(L, name, args = {}) {
     const hosts = pageHosts(b.comments);
     if (!hosts.length) throw new Error(`batch ${args.batch_id} has no page URLs to remember`);
     return addBriefHosts(args.repo_dir || process.cwd(), hosts);
+  }
+  if (name === 'page_file_remember') {
+    if (typeof args.page_url !== 'string' || typeof args.file !== 'string') throw new Error('page_file_remember needs page_url and file');
+    try { return addBriefPageFile(args.repo_dir || process.cwd(), args.page_url, args.file); }
+    catch (e) {
+      if (/no \.pfb\/brief\.md/.test(e.message)) throw new Error(`${e.message}: write .pfb/brief.md (step 0 of /pfb:feedback), then call page_file_remember again`);
+      throw e;
+    }
   }
   if (name === 'batch_open') {
     args = { ...args, id: resolveId(L, args.id) };

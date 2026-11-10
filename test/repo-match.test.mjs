@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { normRemote, pageHosts, repoMatch } from '../server/repo-match.js';
+import { normRemote, pageHosts, pageUrls, repoMatch } from '../server/repo-match.js';
 import { addBriefHosts, readBrief } from '../server/brief.js';
 import { layout } from '../server/paths.js';
 import { callTool } from '../server/tools.js';
@@ -108,4 +108,41 @@ test('a batch whose prior commit exists in this repo matches by prior_commit', (
   json.prior_commits[0].commit_sha = '0'.repeat(40);
   fs.writeFileSync(path.join(L.inbox, 'c.zip'), makeZip({ 'feedback.json': JSON.stringify(json) }));
   assert.equal(callTool(L, 'inbox_list', { repo_dir: d }).batches[0].repo_match.match, false);
+});
+
+test('pageUrls drops query, hash and bad URLs', () => {
+  assert.deepEqual(pageUrls([{ page_url: 'https://h.test/1234?x=1#t' }, { page_url: 'https://h.test/1234' }, { page_url: 'nope' }, {}]), ['https://h.test/1234']);
+});
+
+test('repoMatch: a page URL listed in page_files matches when remote and prior commits do not', () => {
+  const pf = ['https://h.test/1234 -> proto.html'];
+  assert.deepEqual(repoMatch({ remote: null, urls: ['https://h.test/1234'], briefPageFiles: pf }), { match: true, by: 'page_files', remote: null });
+  assert.equal(repoMatch({ remote: null, urls: ['https://h.test/other'], briefPageFiles: pf }).match, false);
+  assert.equal(repoMatch({ remote: null, urls: [], briefPageFiles: pf }).match, false);
+  assert.equal(repoMatch({ remote: 'https://github.com/a/b', repoUrls: ['https://github.com/a/b'], urls: ['https://h.test/1234'], briefPageFiles: pf }).by, 'remote', 'remote still wins');
+});
+
+test('a plain folder (no git) with page_files matches a batch from that page in inbox_list and batch_preview', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-rmf-'));
+  fs.mkdirSync(path.join(d, '.pfb'));
+  fs.writeFileSync(path.join(d, '.pfb', 'brief.md'), '---\npage_files: ["https://h.test/1234 -> proto.html"]\n---\n');
+  const L = layout(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-rmft-')));
+  fs.mkdirSync(L.inbox, { recursive: true });
+  const json = { schema: 'prototype-feedback/v6', export_id: 'pf1', exported_at: '2026-11-09T15:00:00Z',
+    comments: [{ id: 'c1', verb: 'fix', comment: 'x', page_url: 'https://h.test/1234?tab=2' }] };
+  fs.writeFileSync(path.join(L.inbox, 'p.zip'), makeZip({ 'feedback.json': JSON.stringify(json) }));
+  assert.deepEqual(callTool(L, 'inbox_list', { repo_dir: d }).batches[0].repo_match, { match: true, by: 'page_files', remote: null });
+  assert.equal(callTool(L, 'batch_preview', { id: 'pf1', repo_dir: d }).repo_match.by, 'page_files');
+});
+
+test('page_file_remember writes page_files, needs a brief, and refuses a file outside the folder', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-pfr-'));
+  fs.writeFileSync(path.join(d, 'proto.html'), '<h1>x</h1>');
+  const L = layout(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-pfrt-')));
+  assert.throws(() => callTool(L, 'page_file_remember', { page_url: 'https://h.test/1234', file: 'proto.html', repo_dir: d }), /create the brief first/);
+  fs.mkdirSync(path.join(d, '.pfb'));
+  fs.writeFileSync(path.join(d, '.pfb', 'brief.md'), '---\nbase_branch: main\n---\n');
+  const r = callTool(L, 'page_file_remember', { page_url: 'https://h.test/1234#x', file: 'proto.html', repo_dir: d });
+  assert.deepEqual(r, { path: path.join(d, '.pfb', 'brief.md'), page_files: ['https://h.test/1234 -> proto.html'], added: ['https://h.test/1234 -> proto.html'] });
+  assert.throws(() => callTool(L, 'page_file_remember', { page_url: 'https://h.test/1', file: '../x.html', repo_dir: d }), /outside/);
 });

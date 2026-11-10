@@ -5,7 +5,7 @@ description: Work through Prototype Feedback batches (pinned review comments wit
 
 # /pfb:feedback
 
-Work through feedback that reviewers pinned on a prototype with the Prototype Feedback Chrome extension. Tools come from the `pfb` MCP server: `inbox_list`, `batch_preview`, `batch_open`, `comment_get`, `status_set`, `repo_remember`. If those tools are missing, tell the user the plugin's MCP server did not start and that it needs `node` on PATH (`node --version`), then stop.
+Work through feedback that reviewers pinned on a prototype with the Prototype Feedback Chrome extension. Tools come from the `pfb` MCP server: `inbox_list`, `batch_preview`, `batch_open`, `comment_get`, `status_set`, `repo_remember`, `page_file_remember`. If those tools are missing, tell the user the plugin's MCP server did not start and that it needs `node` on PATH (`node --version`), then stop.
 
 If a pfb tool returns an error, show the error to the user and stop. Never continue as if it succeeded.
 
@@ -28,6 +28,7 @@ If a pfb tool returns an error, show the error to the user and stop. Never conti
    - `test_cmd`, `build_cmd`, `lint_cmd`: from `package.json` scripts (`npm test`, `npm run build`, `npm run lint`) or the CI files (`.github/workflows/`). Empty if none.
    - `preview_url_pattern` (for example `https://myapp-git-{branch}-acme.vercel.app`), `design_system`, `do_not_touch` (globs), `repo` (optional): empty unless the developer gives one.
    - `page_hosts`: do not ask. `repo_remember` fills it later (step 2.5).
+   - `page_files`: do not ask. `page_file_remember` fills it later.
    - Goals and constraints: prose for the body.
    Write the file in this format. Do not commit it yourself.
    ```

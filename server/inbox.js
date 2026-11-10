@@ -4,12 +4,12 @@ import path from 'node:path';
 import { readZip } from './zip.js';
 import { normalizeExport } from './normalize.js';
 import { readStatus, reviewerActedAfter, embeddedDone } from './status.js';
-import { pageHosts } from './repo-match.js';
+import { pageHosts, pageUrls } from './repo-match.js';
 
-/** Repo-match inputs of a batch: its page hosts and the shas of earlier fixes. */
+/** Repo-match inputs of a batch: its page hosts and URLs and the shas of earlier fixes. */
 function matchInputs(norm) {
   const pc = Array.isArray(norm.raw && norm.raw.prior_commits) ? norm.raw.prior_commits : [];
-  return { pageHosts: pageHosts(norm.comments), priorShas: pc.map((p) => p && p.commit_sha).filter(Boolean) };
+  return { pageHosts: pageHosts(norm.comments), pageUrls: pageUrls(norm.comments), priorShas: pc.map((p) => p && p.commit_sha).filter(Boolean) };
 }
 
 const FINAL = new Set(['fixed', 'answered', 'proposed', 'needs_input', 'skipped']);

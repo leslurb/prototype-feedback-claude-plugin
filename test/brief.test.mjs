@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseBrief, readBrief, BRANCH_POLICIES } from '../server/brief.js';
+import { parseBrief, readBrief, BRANCH_POLICIES, addBriefPageFile, pageFileFor } from '../server/brief.js';
 
 const SAMPLE = `---
 repo: https://github.com/owner/name        # optional; else git remote
@@ -97,4 +97,77 @@ test('readBrief reports a malformed brief with its path', () => {
   fs.mkdirSync(path.join(root, '.pfb'));
   fs.writeFileSync(path.join(root, '.pfb', 'brief.md'), '---\nbad line\n---\n');
   assert.throws(() => readBrief(root), (e) => e.message.includes(path.join(root, '.pfb', 'brief.md')) && /line 2/.test(e.message));
+});
+
+test('readBrief reads .pfb/brief.md in a folder without git (plain-folder mode)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-nogit-'));
+  fs.mkdirSync(path.join(dir, '.pfb'));
+  fs.writeFileSync(path.join(dir, '.pfb', 'brief.md'), SAMPLE);
+  const b = readBrief(dir);
+  assert.ok(b, 'a brief in a folder without .git is found');
+  assert.equal(b.path, path.join(dir, '.pfb', 'brief.md'));
+  assert.equal(b.test_cmd, 'npm test');
+  assert.equal(readBrief(fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-nogit-'))), null, 'no brief -> null');
+});
+
+test('parseBrief keeps page_files as a list of "url -> file" strings', () => {
+  const { fields } = parseBrief('---\npage_files: ["https://h.test/1234 -> proto.html", "https://h.test/a -> sub/a.html"]\n---\n');
+  assert.deepEqual(fields.page_files, ['https://h.test/1234 -> proto.html', 'https://h.test/a -> sub/a.html']);
+  assert.deepEqual(parseBrief('---\npage_files:\n  - https://h.test/1234 -> proto.html\n---\n').fields.page_files, ['https://h.test/1234 -> proto.html']);
+});
+
+function plainFolder(brief = '---\nbase_branch: main\n---\nGoals.\n') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-pf-'));
+  fs.mkdirSync(path.join(dir, '.pfb'));
+  fs.writeFileSync(path.join(dir, '.pfb', 'brief.md'), brief);
+  fs.writeFileSync(path.join(dir, 'proto.html'), '<h1>x</h1>');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  fs.writeFileSync(path.join(dir, 'sub', 'a.html'), '<h1>a</h1>');
+  return dir;
+}
+
+test('addBriefPageFile adds "url -> file" once and keeps the rest of the brief', () => {
+  const dir = plainFolder();
+  const r = addBriefPageFile(dir, 'https://h.test/1234', 'proto.html');
+  assert.equal(r.path, path.join(dir, '.pfb', 'brief.md'));
+  assert.deepEqual(r.added, ['https://h.test/1234 -> proto.html']);
+  assert.deepEqual(readBrief(dir).page_files, ['https://h.test/1234 -> proto.html']);
+  assert.equal(readBrief(dir).base_branch, 'main');
+  assert.equal(readBrief(dir).body.trim(), 'Goals.');
+  const before = fs.readFileSync(r.path, 'utf8');
+  assert.deepEqual(addBriefPageFile(dir, 'https://h.test/1234?x=1#t', 'proto.html').added, [], 'idempotent; query and hash are dropped');
+  assert.equal(fs.readFileSync(r.path, 'utf8'), before, 'no rewrite when nothing is new');
+  addBriefPageFile(dir, 'https://h.test/a', path.join('sub', 'a.html'));
+  assert.deepEqual(readBrief(dir).page_files, ['https://h.test/1234 -> proto.html', 'https://h.test/a -> sub/a.html'], 'relative paths use /');
+});
+
+test('addBriefPageFile maps one page to one file: a new file replaces the old mapping', () => {
+  const dir = plainFolder();
+  addBriefPageFile(dir, 'https://h.test/1234', 'proto.html');
+  const r = addBriefPageFile(dir, 'https://h.test/1234', 'sub/a.html');
+  assert.deepEqual(r.page_files, ['https://h.test/1234 -> sub/a.html']);
+});
+
+test('addBriefPageFile rejects a file outside the folder, a missing file, a bad URL and a missing brief', () => {
+  const dir = plainFolder();
+  fs.writeFileSync(path.join(path.dirname(dir), 'outside.html'), 'x');
+  assert.throws(() => addBriefPageFile(dir, 'https://h.test/1', '../outside.html'), /outside/);
+  assert.throws(() => addBriefPageFile(dir, 'https://h.test/1', path.join(path.dirname(dir), 'outside.html')), /outside/);
+  assert.throws(() => addBriefPageFile(dir, 'https://h.test/1', 'nope.html'), /does not exist/);
+  assert.throws(() => addBriefPageFile(dir, 'https://h.test/1', 'sub'), /not a file/);
+  assert.throws(() => addBriefPageFile(dir, 'not a url', 'proto.html'), /page_url/);
+  assert.equal(readBrief(dir).page_files, undefined, 'nothing written on a refusal');
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'pfb-pf-'));
+  fs.writeFileSync(path.join(empty, 'proto.html'), 'x');
+  assert.throws(() => addBriefPageFile(empty, 'https://h.test/1', 'proto.html'), /no \.pfb\/brief\.md/);
+});
+
+test('pageFileFor ignores query and hash and returns null for an unknown page', () => {
+  const brief = { page_files: ['https://h.test/1234 -> proto.html', 'https://h.test/a -> sub/a.html'] };
+  assert.equal(pageFileFor(brief, 'https://h.test/1234?x=1#t'), 'proto.html');
+  assert.equal(pageFileFor(brief, 'https://h.test/a'), 'sub/a.html');
+  assert.equal(pageFileFor(brief, 'https://h.test/other'), null);
+  assert.equal(pageFileFor(brief, 'nope'), null);
+  assert.equal(pageFileFor(null, 'https://h.test/1234'), null);
+  assert.equal(pageFileFor({}, 'https://h.test/1234'), null);
 });
