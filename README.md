@@ -22,7 +22,7 @@ Claude lists waiting batches, shows a plan, and after your OK fixes each comment
 
 Claude Code caches a plugin by its version. Every user-visible change bumps `version` in `.claude-plugin/plugin.json` (the MCP server reports the same number) and gets a `vX.Y.Z` git tag. To get a new version: `claude plugin update pfb@prototype-feedback`, then start a new session.
 
-- 0.2.0: repo matching (`repo_match`, `repo_remember`), short batch ids, listener accepts extension requests without an Origin, an unknown extension can read its 403 (the extension then shows "refused (HTTP 403)"), branch names drop a `:port`.
+- 0.2.0: repo matching (`repo_match`, `repo_remember`), short batch ids, listener accepts extension requests without an Origin, an unknown extension can read its 403 (the extension then shows "refused (HTTP 403)"), branch names drop a `:port`, folders without git (offers `git init`, or plain-folder mode with `.pfb/before/` copies), `page_files` + `page_file_remember` (page URL -> local file), `page_shot` (headless Chrome after-shot of a local HTML file, shown on the pin card).
 - 0.1.0: first release.
 
 ## Where files go
